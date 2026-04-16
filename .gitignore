@@ -1,0 +1,27 @@
+# 環境変数・機密情報
+.env
+
+# データベース（ローカルのみ）
+data/
+
+# エクスポートファイル（ローカルのみ）
+exports/
+
+# Pythonキャッシュ
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# 仮想環境
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
