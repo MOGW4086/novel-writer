@@ -10,10 +10,10 @@ LINE Notify は2025年3月31日にサービス終了したため、LINE Messagin
 リトライ仕様:
     - 最大3回リトライ（初回含む計4回試行）
     - リトライ間隔は指数バックオフ（2秒 → 4秒 → 8秒）
-    - 4xx系エラー（認証失敗・無効トークン等）はリトライしない
+    - 400/401/403/404 は呼び出し側の設定ミスのため即失敗
+    - 429（レート制限）・5xx は一時的なエラーのためリトライ対象
 """
 
-import json
 import logging
 import os
 import time
@@ -30,6 +30,10 @@ _LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push"
 # リトライ設定
 _MAX_RETRIES = 3       # 初回失敗後の最大リトライ回数
 _RETRY_BASE_WAIT = 2   # 指数バックオフの基本秒数（2 → 4 → 8 秒）
+
+# リトライしない4xxステータスコード（設定ミス・権限不足など、時間をおいても解決しないもの）
+# 429（レート制限）は時間をおけば回復するためリトライ対象とする
+_NON_RETRYABLE_4XX = frozenset({400, 401, 403, 404})
 
 
 @dataclass
@@ -104,34 +108,37 @@ def _send_once(channel_access_token: str, user_id: str, message: str) -> request
     Returns:
         レスポンスオブジェクト。
     """
-    headers = {
-        "Authorization": f"Bearer {channel_access_token}",
-        "Content-Type": "application/json",
-    }
     body = {
         "to": user_id,
         "messages": [{"type": "text", "text": message}],
     }
-    return requests.post(_LINE_PUSH_URL, headers=headers, data=json.dumps(body), timeout=10)
+    # json= パラメータにより requests が Content-Type: application/json を自動設定する
+    return requests.post(
+        _LINE_PUSH_URL,
+        headers={"Authorization": f"Bearer {channel_access_token}"},
+        json=body,
+        timeout=10,
+    )
 
 
 def _is_client_error(exc: requests.RequestException) -> bool:
     """
-    例外が4xx系クライアントエラーかどうかを判定する。
+    例外がリトライしても解決しないクライアントエラーかどうかを判定する。
 
-    4xx はトークン無効・権限不足など呼び出し側の問題であり、
-    リトライしても解決しないため即失敗とする。
+    _NON_RETRYABLE_4XX（400/401/403/404）はトークン無効・権限不足など
+    設定ミスに起因するため即失敗とする。
+    429（レート制限）は時間をおけば回復するためリトライ対象とする。
 
     Args:
         exc: 判定対象の例外。
 
     Returns:
-        4xx系エラーであれば True。
+        リトライしないクライアントエラーであれば True。
     """
     return (
         isinstance(exc, requests.HTTPError)
         and exc.response is not None
-        and 400 <= exc.response.status_code < 500
+        and exc.response.status_code in _NON_RETRYABLE_4XX
     )
 
 
@@ -160,8 +167,8 @@ def send_novel_notification(payload: NovelNotifyPayload) -> None:
     """
     小説生成完了通知をLINEに送信する。
 
-    4xx系エラー（トークン無効・レート制限等）はリトライせずに即例外を送出する。
-    5xx系など一時的なエラーは最大 _MAX_RETRIES 回リトライする。
+    400/401/403/404 はリトライせずに即例外を送出する。
+    429・5xx系など一時的なエラーは最大 _MAX_RETRIES 回リトライする。
 
     Args:
         payload: 通知する小説情報（タイトル・ジャンル・テーマ・文字数）。
@@ -188,8 +195,8 @@ def send_novel_notification(payload: NovelNotifyPayload) -> None:
                 logger.info("LINE通知送信成功（試行%d回目）", attempt + 1)
                 return
 
-            # 4xx はリトライしても意味がないため即失敗
-            if 400 <= resp.status_code < 500:
+            # リトライしないクライアントエラーは即失敗
+            if resp.status_code in _NON_RETRYABLE_4XX:
                 logger.error(
                     "LINE通知失敗（クライアントエラー）: status=%d body=%s",
                     resp.status_code,
@@ -197,20 +204,22 @@ def send_novel_notification(payload: NovelNotifyPayload) -> None:
                 )
                 resp.raise_for_status()
 
-            # 5xx 等はリトライ対象
+            # 429・5xx 等はリトライ対象
             error = requests.HTTPError(
                 f"LINE通知失敗: status={resp.status_code} body={resp.text}",
                 response=resp,
             )
         except requests.RequestException as exc:
-            # 4xx の raise_for_status() はリトライせずそのまま上位へ
+            # リトライしないクライアントエラーの raise_for_status() はそのまま上位へ
             if _is_client_error(exc):
                 raise
             error = exc
 
         # error は必ずここで設定済み（未到達ケースはすべて return/raise 済み）
-        assert error is not None
+        if error is None:
+            raise RuntimeError("予期しないコードパス: error が未設定です")
         last_exception = error
         _do_retry(attempt, error)
 
-    raise last_exception  # type: ignore[misc]
+    assert last_exception is not None  # ループが0回以上実行された保証（型検査用）
+    raise last_exception

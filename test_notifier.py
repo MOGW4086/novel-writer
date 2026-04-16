@@ -106,14 +106,20 @@ class TestIsClientError(unittest.TestCase):
         exc = requests.HTTPError(response=resp)
         return exc
 
+    def test_400はクライアントエラー(self):
+        self.assertTrue(_is_client_error(self._make_http_error(400)))
+
     def test_401はクライアントエラー(self):
         self.assertTrue(_is_client_error(self._make_http_error(401)))
 
     def test_403はクライアントエラー(self):
         self.assertTrue(_is_client_error(self._make_http_error(403)))
 
-    def test_429はクライアントエラー(self):
-        self.assertTrue(_is_client_error(self._make_http_error(429)))
+    def test_404はクライアントエラー(self):
+        self.assertTrue(_is_client_error(self._make_http_error(404)))
+
+    def test_429はクライアントエラーではなくリトライ対象(self):
+        self.assertFalse(_is_client_error(self._make_http_error(429)))
 
     def test_503はクライアントエラーではない(self):
         self.assertFalse(_is_client_error(self._make_http_error(503)))
@@ -136,13 +142,7 @@ class TestSendNovelNotification(unittest.TestCase):
         os.environ.pop("LINE_CHANNEL_ACCESS_TOKEN", None)
         os.environ.pop("LINE_USER_ID", None)
 
-    def test_成功レスポンスで正常終了(self):
-        resp = _make_response(200, ok=True)
-        with patch("notifier._send_once", return_value=resp):
-            # 例外なく終了すれば成功
-            send_novel_notification(_make_payload())
-
-    def test_成功時にリトライしない(self):
+    def test_成功レスポンスで正常終了かつリトライしない(self):
         resp = _make_response(200, ok=True)
         with patch("notifier._send_once", return_value=resp) as mock_send:
             send_novel_notification(_make_payload())
@@ -150,27 +150,26 @@ class TestSendNovelNotification(unittest.TestCase):
 
     def test_401でリトライせずHTTPError送出(self):
         resp = _make_response(401, ok=False, text="Unauthorized")
-        resp.raise_for_status.side_effect = requests.HTTPError(
-            "401", response=resp
-        )
+        resp.raise_for_status.side_effect = requests.HTTPError("401", response=resp)
         with patch("notifier._send_once", return_value=resp) as mock_send:
             with self.assertRaises(requests.HTTPError):
                 send_novel_notification(_make_payload())
             # リトライなしで1回のみ呼び出される
             self.assertEqual(mock_send.call_count, 1)
 
-    def test_503で最大4回試行する(self):
-        resp = _make_response(503, ok=False, text="Service Unavailable")
-        with patch("notifier._send_once", return_value=resp):
+    def test_429でリトライするレート制限は時間をおけば回復(self):
+        resp = _make_response(429, ok=False, text="Too Many Requests")
+        with patch("notifier._send_once", return_value=resp) as mock_send:
             with patch("notifier.time.sleep"):
                 with self.assertRaises(requests.HTTPError):
                     send_novel_notification(_make_payload())
+            self.assertEqual(mock_send.call_count, 4)  # 初回 + 3回リトライ
 
     def test_503のリトライ回数が4回(self):
         resp = _make_response(503, ok=False, text="Service Unavailable")
         with patch("notifier._send_once", return_value=resp) as mock_send:
             with patch("notifier.time.sleep"):
-                with self.assertRaises(Exception):
+                with self.assertRaises(requests.HTTPError):
                     send_novel_notification(_make_payload())
             self.assertEqual(mock_send.call_count, 4)  # 初回 + 3回リトライ
 
