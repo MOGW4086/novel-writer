@@ -400,6 +400,38 @@ def save_knowledge(
         return cur.lastrowid
 
 
+def save_knowledge_bulk(
+    items: list[dict],
+    source_novel_id: Optional[int] = None,
+) -> list[int]:
+    """
+    知見を一括保存して採番されたIDリストを返す。
+    全件を単一トランザクションで挿入するため、save_knowledge() を複数回呼ぶより効率的。
+
+    Args:
+        items: {"category": str, "insight": str} のリスト
+        source_novel_id: 知見の元となった小説ID（Noneの場合は関連づけなし）
+
+    Returns:
+        挿入した順に並んだIDのリスト
+
+    Raises:
+        sqlite3.IntegrityError: source_novel_id が novels テーブルに存在しない場合
+    """
+    if not items:
+        return []
+    created_at = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        ids: list[int] = []
+        for item in items:
+            cur = conn.execute(
+                "INSERT INTO knowledge (category, insight, source_novel_id, created_at) VALUES (?, ?, ?, ?)",
+                (item["category"], item["insight"], source_novel_id, created_at),
+            )
+            ids.append(cur.lastrowid)
+    return ids
+
+
 def get_knowledge(category: Optional[str] = None) -> list[dict]:
     """
     知見一覧を取得する。
