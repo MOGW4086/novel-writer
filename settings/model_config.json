@@ -16,6 +16,7 @@
     "temperature": 0.3
   },
   "notes": {
+    "model_override": "環境変数 CLAUDE_MODEL が設定されている場合はそちらを優先する。モデル更新時は .env の CLAUDE_MODEL を変更するだけでよい。",
     "stage1_json_validation": "Stage 1のJSON出力が壊れている場合はリトライする（最大3回）。generator.pyでバリデーションを実装すること。",
     "stage2_context": "各場面生成時に全体構成案＋直前場面の本文を必ず渡すこと。",
     "temperature_policy": "本文生成は創造性を高めるため0.9、知見抽出は正確さを優先するため0.3に設定。"
