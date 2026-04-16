@@ -11,14 +11,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# DBファイルのパス（環境変数 DB_PATH でオーバーライド可能。テスト時は ":memory:" を指定）
+# DBファイルのパス（環境変数 DB_PATH でオーバーライド可能）
+# 注意: SQLite の :memory: はコネクションごとに別DBになるため、
+#       このモジュールの接続都度生成パターンでは使用不可。テストには一時ファイルを使うこと。
 DB_PATH = Path(os.getenv("DB_PATH", str(Path(__file__).parent / "data" / "novels.db")))
 
 
 @contextmanager
 def get_connection():
     """DBコネクションのコンテキストマネージャ。自動でコミット/ロールバックを行う。"""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if str(DB_PATH) != ":memory:":
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")  # 外部キー制約を有効化（SQLiteはデフォルト無効）
     conn.row_factory = sqlite3.Row  # カラム名でアクセスできるようにする
