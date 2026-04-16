@@ -8,6 +8,12 @@
     キャラ — 登場人物の魅力・個性・セリフの自然さなどの評価
     構成  — 場面構成・起承転結・ページ配分などの評価
     ジャンル — ジャンル固有の表現・読者層への適合度などの評価
+
+Claude API リトライ仕様:
+    - ネットワーク接続エラー（APIConnectionError）および 5xx サーバーエラーをリトライ
+    - 最大3回リトライ（初回含む計4回試行）
+    - リトライ間隔は指数バックオフ（2秒 → 4秒 → 8秒）
+    - 4xx クライアントエラー（認証失敗・不正リクエスト等）はリトライしない
 """
 
 import functools
@@ -15,6 +21,7 @@ import json
 import logging
 import os
 import sqlite3
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -33,6 +40,10 @@ VALID_CATEGORIES = frozenset({"文体", "キャラ", "構成", "ジャンル"})
 
 _SETTINGS_DIR = Path(__file__).parent / "settings"
 _MODEL_CONFIG_PATH = _SETTINGS_DIR / "model_config.json"
+
+# Claude API リトライ設定
+_MAX_RETRIES = 3       # 初回失敗後の最大リトライ回数
+_RETRY_BASE_WAIT = 2   # 指数バックオフの基本秒数（2 → 4 → 8 秒）
 
 # 知見抽出プロンプト（{feedback_text} はプレースホルダー。埋め込みは .replace() で行う）
 _EXTRACT_PROMPT = """\
@@ -78,9 +89,17 @@ def _load_knowledge_config() -> dict:
     }
 
 
+@functools.lru_cache(maxsize=1)
 def _get_client() -> anthropic.Anthropic:
     """
-    Anthropic クライアントを生成する。
+    Anthropic クライアントを生成してキャッシュする。
+    lru_cache により初回のみインスタンスを生成する。
+
+    lru_cache は例外をキャッシュしないため、APIキー未設定で EnvironmentError が発生した場合は
+    キャッシュされず、次回呼び出し時に再チェックされる。
+
+    Returns:
+        Anthropic クライアントインスタンス。
 
     Raises:
         EnvironmentError: ANTHROPIC_API_KEY が未設定の場合。
@@ -96,6 +115,7 @@ def _get_client() -> anthropic.Anthropic:
 def _call_claude(client: anthropic.Anthropic, config: dict, feedback_text: str) -> str:
     """
     Claude API にフィードバックを渡し、知見JSON文字列を返す。
+    ネットワークエラーや 5xx サーバーエラーは指数バックオフでリトライする。
 
     .replace() でプレースホルダーを埋め込むことで、
     フィードバックに `{}` が含まれても KeyError が発生しない。
@@ -107,15 +127,48 @@ def _call_claude(client: anthropic.Anthropic, config: dict, feedback_text: str) 
 
     Returns:
         Claude が生成した生テキスト。
+
+    Raises:
+        anthropic.APIError: 最大リトライ後も失敗した場合、または 4xx エラーの場合。
     """
     prompt = _EXTRACT_PROMPT.replace("{feedback_text}", feedback_text)
-    response = client.messages.create(
-        model=config["model"],
-        max_tokens=config["max_tokens"],
-        temperature=config["temperature"],
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text.strip()
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            response = client.messages.create(
+                model=config["model"],
+                max_tokens=config["max_tokens"],
+                temperature=config["temperature"],
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.content[0].text.strip()
+
+        except anthropic.APIConnectionError as exc:
+            # ネットワーク接続エラーはリトライ対象
+            last_exc = exc
+        except anthropic.APIStatusError as exc:
+            # 5xx はリトライ対象、4xx は即失敗
+            if exc.status_code < 500:
+                logger.error(
+                    "Claude API クライアントエラー（リトライなし）: status=%d", exc.status_code
+                )
+                raise
+            last_exc = exc
+
+        if attempt < _MAX_RETRIES:
+            wait = _RETRY_BASE_WAIT ** (attempt + 1)
+            logger.warning(
+                "Claude API 呼び出し失敗（試行%d回目）。%d秒後にリトライします。エラー: %s",
+                attempt + 1,
+                wait,
+                last_exc,
+            )
+            time.sleep(wait)
+        else:
+            logger.error("Claude API 呼び出し失敗（最大リトライ回数到達）。エラー: %s", last_exc)
+
+    raise last_exc  # type: ignore[misc]
 
 
 def _parse_insights(raw: str) -> list[dict]:
