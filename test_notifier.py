@@ -11,6 +11,7 @@ import requests
 
 from notifier import (
     NovelNotifyPayload,
+    _MAX_RETRIES,
     _do_retry,
     _format_message,
     _get_credentials,
@@ -129,6 +130,22 @@ class TestIsClientError(unittest.TestCase):
 
     def test_responseなしのHTTPErrorはクライアントエラーではない(self):
         self.assertFalse(_is_client_error(requests.HTTPError()))
+
+
+class TestDoRetry(unittest.TestCase):
+    """_do_retry のログ出力・sleep動作テスト。"""
+
+    def test_途中試行でwarningログとsleepを実行(self):
+        err = requests.ConnectionError("接続失敗")
+        with patch("notifier.time.sleep") as mock_sleep:
+            _do_retry(0, err)
+            mock_sleep.assert_called_once_with(2)  # 2^1=2秒
+
+    def test_最終試行でsleepしない(self):
+        err = requests.ConnectionError("接続失敗")
+        with patch("notifier.time.sleep") as mock_sleep:
+            _do_retry(_MAX_RETRIES, err)
+            mock_sleep.assert_not_called()
 
 
 class TestSendNovelNotification(unittest.TestCase):
