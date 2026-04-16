@@ -5,7 +5,7 @@ generator / notifier / db をモックして動作を検証する。
 
 import sys
 import unittest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 import requests
 

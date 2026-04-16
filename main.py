@@ -19,13 +19,9 @@ import db
 import generator
 import notifier
 
-# ロガー設定（タイムスタンプ付きで標準出力へ）
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    stream=sys.stdout,
-)
+# モジュールレベルではロガーの取得のみ行い、basicConfig は main() 内で設定する。
+# モジュールレベルで basicConfig を呼び出すと、テストや他モジュールからのインポート時に
+# グローバルなロギング設定を意図せず変更・上書きしてしまうため。
 logger = logging.getLogger(__name__)
 
 
@@ -76,7 +72,7 @@ def _run(genre: str | None, theme: str | None) -> None:
         theme: テーマ（Noneの場合はランダム選択）。
 
     Raises:
-        Exception: 生成・通知のいずれかで回復不能なエラーが発生した場合。
+        Exception: 生成で回復不能なエラーが発生した場合。
     """
     # 小説生成
     logger.info("小説生成を開始します（genre=%s / theme=%s）", genre, theme)
@@ -100,9 +96,9 @@ def _run(genre: str | None, theme: str | None) -> None:
     try:
         notifier.send_novel_notification(payload)
         logger.info("LINE通知を送信しました")
-    except Exception as e:
-        # 通知失敗は生成済みコンテンツへの影響がないのでエラーログのみ記録して続行
-        logger.error("LINE通知に失敗しました（生成データは保存済み）: %s", e)
+    except Exception:
+        # 通知失敗は生成済みコンテンツへの影響がないため、スタックトレース付きで記録して続行
+        logger.exception("LINE通知に失敗しました（生成データは保存済み）")
 
 
 def main() -> None:
@@ -110,6 +106,15 @@ def main() -> None:
     エントリーポイント。
     引数を解析し、DB初期化後に小説生成・通知を実行する。
     """
+    # ロギング設定（タイムスタンプ付きで標準出力へ）
+    # main() 内で設定することでテスト・インポート時への副作用を防ぐ
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        stream=sys.stdout,
+    )
+
     args = _parse_args()
 
     mode = "手動" if args.manual else "自動（スケジューラ）"
@@ -125,8 +130,8 @@ def main() -> None:
 
     try:
         _run(genre=genre, theme=theme)
-    except Exception as e:
-        logger.exception("実行中に予期しないエラーが発生しました: %s", e)
+    except Exception:
+        logger.exception("実行中に予期しないエラーが発生しました")
         sys.exit(1)
 
     logger.info("=== novel-writer 正常終了 ===")
