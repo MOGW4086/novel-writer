@@ -25,3 +25,15 @@ env/
 # IDE
 .vscode/
 .idea/
+
+# テスト
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ログ
+*.log
+
+# OS固有
+.DS_Store
+Thumbs.db
