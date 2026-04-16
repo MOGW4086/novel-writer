@@ -14,6 +14,7 @@ import anthropic
 import db
 from knowledge import (
     VALID_CATEGORIES,
+    _call_claude,
     _get_client,
     _load_knowledge_config,
     _parse_insights,
@@ -114,13 +115,11 @@ class TestCallClaude(unittest.TestCase):
         return client
 
     def test_成功時にテキストを返す(self):
-        from knowledge import _call_claude
         client = self._make_client_with_response('[{"category": "文体", "insight": "テスト"}]')
         result = _call_claude(client, self._config, "テストフィードバック")
         self.assertIn("文体", result)
 
     def test_ConnectionErrorでリトライする(self):
-        from knowledge import _call_claude
         client = MagicMock()
         # 3回失敗後に成功
         mock_content = MagicMock()
@@ -138,7 +137,6 @@ class TestCallClaude(unittest.TestCase):
         self.assertEqual(client.messages.create.call_count, 3)
 
     def test_5xxエラーでリトライする(self):
-        from knowledge import _call_claude
         client = MagicMock()
         mock_content = MagicMock()
         mock_content.text = "成功"
@@ -153,7 +151,6 @@ class TestCallClaude(unittest.TestCase):
         self.assertEqual(result, "成功")
 
     def test_4xxエラーはリトライしない(self):
-        from knowledge import _call_claude
         client = MagicMock()
         client.messages.create.side_effect = anthropic.APIStatusError(
             "Unauthorized", response=MagicMock(status_code=401), body={}
@@ -163,7 +160,6 @@ class TestCallClaude(unittest.TestCase):
         self.assertEqual(client.messages.create.call_count, 1)
 
     def test_最大リトライ後も失敗で例外を送出する(self):
-        from knowledge import _call_claude
         client = MagicMock()
         client.messages.create.side_effect = anthropic.APIConnectionError(request=MagicMock())
         with patch("knowledge.time.sleep"):
@@ -172,7 +168,6 @@ class TestCallClaude(unittest.TestCase):
         self.assertEqual(client.messages.create.call_count, 4)  # 初回 + 3回リトライ
 
     def test_リトライの待機時間が指数バックオフ(self):
-        from knowledge import _call_claude
         client = MagicMock()
         client.messages.create.side_effect = anthropic.APIConnectionError(request=MagicMock())
         with patch("knowledge.time.sleep") as mock_sleep:
@@ -200,8 +195,7 @@ class TestExtractAndSaveKnowledge(unittest.TestCase):
         os.environ.pop("ANTHROPIC_API_KEY", None)
         _get_client.cache_clear()
         self._tmp.close()
-        import os as _os
-        _os.unlink(self._tmp.name)
+        os.unlink(self._tmp.name)
 
     def _mock_claude(self, response_text: str):
         """_call_claude をモックするコンテキストマネージャを返す。"""

@@ -168,7 +168,8 @@ def _call_claude(client: anthropic.Anthropic, config: dict, feedback_text: str) 
         else:
             logger.error("Claude API 呼び出し失敗（最大リトライ回数到達）。エラー: %s", last_exc)
 
-    raise last_exc  # type: ignore[misc]
+    assert last_exc is not None  # ループが1回以上実行された保証（型検査用）
+    raise last_exc
 
 
 def _parse_insights(raw: str) -> list[dict]:
