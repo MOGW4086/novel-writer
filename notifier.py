@@ -114,53 +114,49 @@ def send_novel_notification(payload: NovelNotifyPayload) -> None:
     last_exception: Optional[Exception] = None
 
     for attempt in range(_MAX_RETRIES + 1):
-        # ネットワークエラー（接続失敗・タイムアウト等）はリトライ対象
         try:
             resp = _send_once(token, message)
-        except requests.RequestException as exc:
-            last_exception = exc
-            if attempt < _MAX_RETRIES:
-                wait = _RETRY_BASE_WAIT ** (attempt + 1)
-                logger.warning(
-                    "LINE通知失敗（試行%d回目）。%d秒後にリトライします。エラー: %s",
-                    attempt + 1,
-                    wait,
-                    exc,
+
+            if resp.ok:
+                logger.info("LINE通知送信成功（試行%d回目）", attempt + 1)
+                return
+
+            # 4xx はリトライしても意味がないため即失敗
+            if 400 <= resp.status_code < 500:
+                logger.error(
+                    "LINE通知失敗（クライアントエラー）: status=%d body=%s",
+                    resp.status_code,
+                    resp.text,
                 )
-                time.sleep(wait)
-            else:
-                logger.error("LINE通知失敗（最大リトライ回数到達）。エラー: %s", exc)
-            continue
+                resp.raise_for_status()
 
-        # 4xx はリトライしても意味がないため即失敗
-        if 400 <= resp.status_code < 500:
-            logger.error(
-                "LINE通知失敗（クライアントエラー）: status=%d body=%s",
-                resp.status_code,
-                resp.text,
-            )
-            resp.raise_for_status()
-
-        # 2xx 以外（5xx 等）はリトライ対象
-        if not resp.ok:
-            last_exception = requests.HTTPError(
+            # 5xx 等はリトライ対象として error に格納
+            error: requests.RequestException = requests.HTTPError(
                 f"LINE通知失敗: status={resp.status_code} body={resp.text}",
                 response=resp,
             )
-            if attempt < _MAX_RETRIES:
-                wait = _RETRY_BASE_WAIT ** (attempt + 1)
-                logger.warning(
-                    "LINE通知失敗（試行%d回目）。%d秒後にリトライします。エラー: %s",
-                    attempt + 1,
-                    wait,
-                    last_exception,
-                )
-                time.sleep(wait)
-            else:
-                logger.error("LINE通知失敗（最大リトライ回数到達）。エラー: %s", last_exception)
-            continue
+        except requests.RequestException as exc:
+            # 4xx の raise_for_status() はリトライせずそのまま上位へ
+            if (
+                isinstance(exc, requests.HTTPError)
+                and exc.response is not None
+                and 400 <= exc.response.status_code < 500
+            ):
+                raise
+            error = exc
 
-        logger.info("LINE通知送信成功（試行%d回目）", attempt + 1)
-        return
+        # ネットワークエラー・5xx のリトライ共通処理
+        last_exception = error
+        if attempt < _MAX_RETRIES:
+            wait = _RETRY_BASE_WAIT ** (attempt + 1)
+            logger.warning(
+                "LINE通知失敗（試行%d回目）。%d秒後にリトライします。エラー: %s",
+                attempt + 1,
+                wait,
+                error,
+            )
+            time.sleep(wait)
+        else:
+            logger.error("LINE通知失敗（最大リトライ回数到達）。エラー: %s", error)
 
     raise last_exception  # type: ignore[misc]
