@@ -1,0 +1,24 @@
+{
+  "model": "claude-sonnet-4-6",
+  "stage1": {
+    "description": "構成案生成（JSON出力）",
+    "max_tokens": 1024,
+    "temperature": 0.7
+  },
+  "stage2": {
+    "description": "本文生成（1場面ごと）",
+    "max_tokens": 2048,
+    "temperature": 0.9
+  },
+  "knowledge": {
+    "description": "フィードバックからの知見抽出",
+    "max_tokens": 512,
+    "temperature": 0.3
+  },
+  "notes": {
+    "model_override": "環境変数 CLAUDE_MODEL が設定されている場合はそちらを優先する。モデル更新時は .env の CLAUDE_MODEL を変更するだけでよい。",
+    "stage1_json_validation": "Stage 1のJSON出力が壊れている場合はリトライする（最大3回）。generator.pyでバリデーションを実装すること。",
+    "stage2_context": "各場面生成時に全体構成案＋直前場面の本文を必ず渡すこと。",
+    "temperature_policy": "本文生成は創造性を高めるため0.9、知見抽出は正確さを優先するため0.3に設定。"
+  }
+}
