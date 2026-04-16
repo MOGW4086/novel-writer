@@ -4,6 +4,7 @@ Claude API と DB への依存をモックして動作検証する。
 """
 
 import os
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -11,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import db
 from knowledge import (
     VALID_CATEGORIES,
+    _load_knowledge_config,
     _parse_insights,
     extract_and_save_knowledge,
     get_knowledge_for_prompt,
@@ -82,10 +84,17 @@ class TestParseInsights(unittest.TestCase):
         self.assertIn("パースに失敗", str(ctx.exception))
 
     def test_リスト以外のJSONの場合ValueError(self):
-        # JSON配列ではなくオブジェクトのみだと配列が見つからずエラーになる
+        # JSON配列ではなくオブジェクトのみだと [ が見つからずエラーになる
         with self.assertRaises(ValueError) as ctx:
             _parse_insights('{"category": "文体", "insight": "XXX"}')
         self.assertIn("見つかりません", str(ctx.exception))
+
+    def test_フィードバックに中括弧が含まれても正しく動作する(self):
+        # .replace() を使うことで {} を含む insight があっても KeyError にならない
+        raw = '[{"category": "文体", "insight": "例: {name}のような表現を使う"}]'
+        result = _parse_insights(raw)
+        self.assertEqual(len(result), 1)
+        self.assertIn("{name}", result[0]["insight"])
 
 
 class TestExtractAndSaveKnowledge(unittest.TestCase):
@@ -98,6 +107,8 @@ class TestExtractAndSaveKnowledge(unittest.TestCase):
         self._db_path_patcher = patch("db.DB_PATH", new=__import__("pathlib").Path(self._tmp.name))
         self._db_path_patcher.start()
         db.init_db()
+        # lru_cache をリセットして各テストで設定を再読み込みできるようにする
+        _load_knowledge_config.cache_clear()
 
     def tearDown(self):
         self._db_path_patcher.stop()
@@ -107,17 +118,13 @@ class TestExtractAndSaveKnowledge(unittest.TestCase):
 
     def _mock_claude(self, response_text: str):
         """_call_claude をモックするコンテキストマネージャを返す。"""
-        return patch(
-            "knowledge._call_claude",
-            return_value=response_text,
-        )
+        return patch("knowledge._call_claude", return_value=response_text)
 
     def test_正常系_知見を抽出してDBに保存する(self):
         response_text = '[{"category": "文体", "insight": "テンポよく書く"}]'
         with self._mock_claude(response_text):
             ids = extract_and_save_knowledge("文体がよかった")
         self.assertEqual(len(ids), 1)
-        # DBに保存されたか確認
         rows = db.get_knowledge()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["category"], "文体")
@@ -134,7 +141,14 @@ class TestExtractAndSaveKnowledge(unittest.TestCase):
         rows = db.get_knowledge()
         self.assertEqual(rows[0]["source_novel_id"], novel_id)
 
-    def test_複数の知見が保存される(self):
+    def test_存在しないnovel_idのときValueError(self):
+        response_text = '[{"category": "文体", "insight": "テンポよく書く"}]'
+        with self._mock_claude(response_text):
+            with self.assertRaises(ValueError) as ctx:
+                extract_and_save_knowledge("面白かった", novel_id=9999)
+        self.assertIn("novel_id=9999", str(ctx.exception))
+
+    def test_複数の知見が単一トランザクションで保存される(self):
         response_text = """[
             {"category": "文体", "insight": "会話文を増やす"},
             {"category": "構成", "insight": "伏線を張る"}
@@ -142,9 +156,17 @@ class TestExtractAndSaveKnowledge(unittest.TestCase):
         with self._mock_claude(response_text):
             ids = extract_and_save_knowledge("とても面白かった")
         self.assertEqual(len(ids), 2)
+        # 保存順にIDが採番されている
+        self.assertLess(ids[0], ids[1])
+
+    def test_フィードバックに中括弧が含まれてもKeyErrorにならない(self):
+        # .replace() による埋め込みで {} があっても例外なし
+        response_text = '[{"category": "文体", "insight": "表現を豊かにする"}]'
+        with self._mock_claude(response_text):
+            ids = extract_and_save_knowledge("このコード {sample} のような描写が良かった")
+        self.assertEqual(len(ids), 1)
 
     def test_抽出結果が0件のとき空リストを返す(self):
-        # 無効カテゴリのみで実際の保存は0件
         response_text = '[{"category": "その他", "insight": "XXX"}]'
         with self._mock_claude(response_text):
             ids = extract_and_save_knowledge("普通だった")

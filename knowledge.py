@@ -10,10 +10,11 @@
     ジャンル — ジャンル固有の表現・読者層への適合度などの評価
 """
 
+import functools
 import json
 import logging
 import os
-import re
+import sqlite3
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +22,9 @@ import anthropic
 from dotenv import load_dotenv
 
 import db
+
+# モジュール読み込み時に .env を1回だけ読み込む（generator.py と同じパターン）
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +34,7 @@ VALID_CATEGORIES = frozenset({"文体", "キャラ", "構成", "ジャンル"})
 _SETTINGS_DIR = Path(__file__).parent / "settings"
 _MODEL_CONFIG_PATH = _SETTINGS_DIR / "model_config.json"
 
-# 知見抽出プロンプト
+# 知見抽出プロンプト（{feedback_text} はプレースホルダー。埋め込みは .replace() で行う）
 _EXTRACT_PROMPT = """\
 あなたは小説創作のフィードバックを分析する専門家です。
 以下のフィードバックから、今後の小説生成に活かせる具体的な知見を抽出してください。
@@ -51,10 +55,27 @@ _EXTRACT_PROMPT = """\
 ## 出力形式
 JSON配列のみ出力してください（前置きや説明は不要）。
 [
-  {{"category": "文体", "insight": "具体的な知見"}},
-  {{"category": "キャラ", "insight": "具体的な知見"}}
+  {"category": "文体", "insight": "具体的な知見"},
+  {"category": "キャラ", "insight": "具体的な知見"}
 ]
 """
+
+
+@functools.lru_cache(maxsize=1)
+def _load_knowledge_config() -> dict:
+    """
+    model_config.json から knowledge セクションを読み込む。
+    lru_cache により初回のみファイルI/Oを行う。
+
+    Returns:
+        knowledge 設定 dict（model / max_tokens / temperature）。
+    """
+    with open(_MODEL_CONFIG_PATH, encoding="utf-8") as f:
+        config = json.load(f)
+    return {
+        "model": os.getenv("CLAUDE_MODEL", config["model"]),
+        **config["knowledge"],
+    }
 
 
 def _get_client() -> anthropic.Anthropic:
@@ -72,24 +93,12 @@ def _get_client() -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=api_key)
 
 
-def _load_knowledge_config() -> dict:
-    """
-    model_config.json から knowledge セクションを読み込む。
-
-    Returns:
-        knowledge 設定 dict（model / max_tokens / temperature）。
-    """
-    with open(_MODEL_CONFIG_PATH, encoding="utf-8") as f:
-        config = json.load(f)
-    return {
-        "model": os.getenv("CLAUDE_MODEL", config["model"]),
-        **config["knowledge"],
-    }
-
-
 def _call_claude(client: anthropic.Anthropic, config: dict, feedback_text: str) -> str:
     """
     Claude API にフィードバックを渡し、知見JSON文字列を返す。
+
+    .replace() でプレースホルダーを埋め込むことで、
+    フィードバックに `{}` が含まれても KeyError が発生しない。
 
     Args:
         client: Anthropic クライアント。
@@ -99,7 +108,7 @@ def _call_claude(client: anthropic.Anthropic, config: dict, feedback_text: str) 
     Returns:
         Claude が生成した生テキスト。
     """
-    prompt = _EXTRACT_PROMPT.format(feedback_text=feedback_text)
+    prompt = _EXTRACT_PROMPT.replace("{feedback_text}", feedback_text)
     response = client.messages.create(
         model=config["model"],
         max_tokens=config["max_tokens"],
@@ -113,7 +122,8 @@ def _parse_insights(raw: str) -> list[dict]:
     """
     Claude の出力テキストから知見リストをパースする。
 
-    前置き文や ```json ブロックが含まれていても最初のJSON配列を抽出する。
+    最初の `[` から最後の `]` までを候補として抽出することで、
+    前置き文・コードブロック・greedy マッチ問題を回避する。
     カテゴリが VALID_CATEGORIES に含まれない行は除外する。
 
     Args:
@@ -125,20 +135,21 @@ def _parse_insights(raw: str) -> list[dict]:
     Raises:
         ValueError: JSON配列が見つからない、またはパースに失敗した場合。
     """
-    # JSON配列を抽出（前置きテキストや ```json ブロックを無視）
-    match = re.search(r"\[.*\]", raw, re.DOTALL)
-    if not match:
+    # 最初の [ から最後の ] を候補とすることで greedy マッチを回避
+    start = raw.find("[")
+    end = raw.rfind("]")
+    if start == -1 or end == -1 or start >= end:
         raise ValueError(f"知見JSONが見つかりませんでした。出力内容: {raw[:200]}")
 
     try:
-        items = json.loads(match.group(0))
+        items = json.loads(raw[start : end + 1])
     except json.JSONDecodeError as e:
         raise ValueError(f"知見JSONのパースに失敗しました: {e}\n出力内容: {raw[:200]}") from e
 
     if not isinstance(items, list):
         raise ValueError(f"知見JSONがリスト形式ではありません: {type(items)}")
 
-    # 不正なカテゴリのエントリを除外してログに残す
+    # 不正なカテゴリ・空 insight のエントリを除外してログに残す
     valid_items = []
     for item in items:
         category = item.get("category", "")
@@ -162,7 +173,7 @@ def extract_and_save_knowledge(
     フィードバックテキストから知見を抽出し、knowledge テーブルに保存する。
 
     Claude API でフィードバックを分析してカテゴリ別の知見リストを生成し、
-    各知見を db.save_knowledge() でDBに保存する。
+    全件を単一トランザクションで DB に保存する。
 
     Args:
         feedback_text: ユーザーが書いたフィードバックテキスト。
@@ -174,9 +185,8 @@ def extract_and_save_knowledge(
     Raises:
         EnvironmentError: ANTHROPIC_API_KEY が未設定の場合。
         ValueError: feedback_text が空の場合、または知見のパースに失敗した場合。
+        ValueError: novel_id が novels テーブルに存在しない場合（FK制約違反）。
     """
-    load_dotenv()
-
     if not feedback_text or not feedback_text.strip():
         raise ValueError("feedback_text が空です。フィードバックテキストを指定してください。")
 
@@ -192,17 +202,17 @@ def extract_and_save_knowledge(
         logger.warning("抽出された知見が0件でした。フィードバック内容を確認してください。")
         return []
 
-    saved_ids: list[int] = []
-    for item in insights:
-        knowledge_id = db.save_knowledge(
-            category=item["category"],
-            insight=item["insight"],
-            source_novel_id=novel_id,
-        )
-        saved_ids.append(knowledge_id)
-        logger.info("知見を保存しました: id=%d category=%s", knowledge_id, item["category"])
+    try:
+        saved_ids = db.save_knowledge_bulk(insights, source_novel_id=novel_id)
+    except sqlite3.IntegrityError as e:
+        raise ValueError(
+            f"知見の保存に失敗しました。novel_id={novel_id} が novels テーブルに存在しない可能性があります: {e}"
+        ) from e
 
     logger.info("知見抽出完了: %d件保存 (novel_id=%s)", len(saved_ids), novel_id)
+    for i, (item, kid) in enumerate(zip(insights, saved_ids)):
+        logger.info("  [%d] id=%d category=%s", i + 1, kid, item["category"])
+
     return saved_ids
 
 
