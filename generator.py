@@ -36,8 +36,12 @@ _STAGE1_MARKER = "## Stage 1 - 構成案生成プロンプト"
 _STAGE2_MARKER = "## Stage 2 - 本文生成プロンプト（1場面ごとに使用）"
 
 
+@functools.lru_cache(maxsize=1)
 def _load_model_config() -> dict:
-    """model_config.json を読み込む。"""
+    """
+    model_config.json を読み込む。
+    lru_cache により初回のみファイルI/Oを行う（_load_base_prompt と一貫した設計）。
+    """
     with open(_MODEL_CONFIG_PATH, encoding="utf-8") as f:
         return json.load(f)
 
@@ -124,7 +128,7 @@ def pick_genre_and_theme(genre_name: Optional[str] = None, theme: Optional[str] 
         weights = [g["weight"] for g in genres]
         selected_genre = random.choices(genres, weights=weights, k=1)[0]
 
-    # テーマ決定
+    # テーマ決定（引数 theme をそのまま selected_theme に統一して命名の一貫性を保つ）
     if theme:
         selected_theme = theme
     elif selected_genre.get("sub_themes"):
@@ -178,13 +182,18 @@ def _generate_outline(
 
 上記の条件で短編小説の構成案をJSON形式で出力してください。JSON以外のテキストは含めないでください。"""
 
+    # リトライ時に追記する文言（ループ前に定義してプロンプトが際限なく伸びるのを防ぐ）
+    _retry_note = "\n\n（前回の出力がJSON形式ではありませんでした。必ずJSON形式のみ出力してください。）"
+
     max_retries = 3
     for attempt in range(1, max_retries + 1):
+        # 2回目以降のみリトライ文言を付与（毎回追記すると重複するため）
+        content = prompt + (_retry_note if attempt > 1 else "")
         response = client.messages.create(
             model=model,
             max_tokens=config["max_tokens"],
             temperature=config["temperature"],
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": content}],
         )
         raw = response.content[0].text.strip()
 
@@ -205,8 +214,6 @@ def _generate_outline(
                 raise RuntimeError(
                     f"構成案のJSON生成に{max_retries}回失敗しました。最後のエラー: {e}\n出力内容: {raw[:200]}"
                 )
-            # リトライ時はプロンプトにエラーを追記して再挑戦
-            prompt += f"\n\n（前回の出力がJSON形式ではありませんでした。必ずJSON形式のみ出力してください。）"
 
     raise RuntimeError("到達しないはずのコードパスです")
 
