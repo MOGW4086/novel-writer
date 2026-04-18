@@ -130,6 +130,7 @@ class TestSubmitFeedback(unittest.TestCase):
         self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self.client = _make_client(self._tmp.name)
         import db as db_mod
+        self.db_mod = db_mod
         self.novel_id = db_mod.save_novel("フィードバックテスト", "ホラー", "怪談", "本文")
 
     def tearDown(self):
@@ -173,6 +174,7 @@ class TestSubmitFeedback(unittest.TestCase):
             self.client.post(
                 f"/novels/{self.novel_id}/feedback",
                 data={"rating": "5", "comment": "文体が素晴らしい"},
+                follow_redirects=False,
             )
             mock_extract.assert_called_once_with("文体が素晴らしい", novel_id=self.novel_id)
 
@@ -181,11 +183,11 @@ class TestSubmitFeedback(unittest.TestCase):
             self.client.post(
                 f"/novels/{self.novel_id}/feedback",
                 data={"rating": "3", "comment": ""},
+                follow_redirects=False,
             )
             mock_extract.assert_not_called()
 
     def test_知見抽出が失敗してもフィードバックは保存される(self):
-        import db as db_mod
         with patch("knowledge.extract_and_save_knowledge", side_effect=Exception("API error")):
             res = self.client.post(
                 f"/novels/{self.novel_id}/feedback",
@@ -194,7 +196,7 @@ class TestSubmitFeedback(unittest.TestCase):
             )
         # 知見抽出が失敗しても303リダイレクトされる
         self.assertEqual(res.status_code, 303)
-        feedbacks = db_mod.get_feedback(self.novel_id)
+        feedbacks = self.db_mod.get_feedback(self.novel_id)
         self.assertEqual(len(feedbacks), 1)
         self.assertEqual(feedbacks[0]["comment"], "良かった")
 
