@@ -42,8 +42,10 @@ LINE_USER_ID=...
 ### DB 初期化・ジャンル設定の投入
 
 ```bash
-python main.py --manual --genre "異世界転生" --theme "テスト"
-# 初回実行時に DB が自動作成される
+source venv/bin/activate
+
+# ジャンル設定を DB に登録（初回のみ必須）
+python -c "import db; db.init_db(); db.load_genre_settings_from_json('settings/genre_config.json')"
 ```
 
 ## 使い方
