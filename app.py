@@ -73,9 +73,9 @@ async def index(request: Request):
         s["is_new"] = _is_new(s.get("latest_generated_at") or "")
 
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
-            "request": request,
             "series_list": series_list,
             "standalone": standalone,
         },
@@ -98,9 +98,9 @@ async def series_detail(request: Request, series_id: int):
     novels = [_enrich_novel(n) for n in db.get_novels_by_series(series_id)]
 
     return templates.TemplateResponse(
+        request,
         "series.html",
         {
-            "request": request,
             "series": series,
             "novels": novels,
         },
@@ -125,7 +125,15 @@ async def novel_detail(request: Request, novel_id: int):
     progress = db.get_reading_progress(novel_id)
     if progress is None:
         db.upsert_reading_progress(novel_id, scroll_percent=0)
-        progress = db.get_reading_progress(novel_id)
+        # upsert 直後なのでデフォルト値でインメモリ構築し、DBへの再アクセスを省く
+        now = datetime.now(timezone.utc).isoformat()
+        progress = {
+            "novel_id": novel_id,
+            "scroll_percent": 0,
+            "is_completed": 0,
+            "opened_at": now,
+            "last_read_at": now,
+        }
 
     # 所属シリーズ情報（あれば取得）
     series = None
@@ -138,9 +146,9 @@ async def novel_detail(request: Request, novel_id: int):
     feedbacks = db.get_feedback(novel_id)
 
     return templates.TemplateResponse(
+        request,
         "novel.html",
         {
-            "request": request,
             "novel": novel,
             "progress": progress,
             "series": series,
@@ -178,7 +186,7 @@ async def update_progress(novel_id: int, body: ProgressRequest):
 async def submit_feedback(
     novel_id: int,
     rating: int = Form(...),
-    comment: str = Form(""),
+    comment: str = Form("", max_length=2000),
 ):
     """
     フィードバック（評価・コメント）を保存してリダイレクトする。
