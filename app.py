@@ -6,18 +6,21 @@ FastAPI Webアプリ。
     uvicorn app:app --reload --port 8000
 """
 
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi import BackgroundTasks, FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 import db
+import knowledge
 
 app = FastAPI(title="novel-reader")
 templates = Jinja2Templates(directory="templates")
+logger = logging.getLogger(__name__)
 
 
 class ProgressRequest(BaseModel):
@@ -184,14 +187,24 @@ async def update_progress(novel_id: int, body: ProgressRequest):
 # フィードバック送信
 # ──────────────────────────────────────────────
 
+def _run_knowledge_extraction(comment: str, novel_id: int) -> None:
+    """バックグラウンドタスク: 知見抽出を実行する。失敗してもログのみ記録する。"""
+    try:
+        knowledge.extract_and_save_knowledge(comment, novel_id=novel_id)
+    except Exception as exc:
+        logger.warning("知見抽出に失敗しました（novel_id=%d）: %s", novel_id, exc, exc_info=True)
+
+
 @app.post("/novels/{novel_id}/feedback")
 async def submit_feedback(
     novel_id: int,
+    background_tasks: BackgroundTasks,
     rating: int = Form(...),
     comment: str = Form("", max_length=2000),
 ):
     """
     フィードバック（評価・コメント）を保存してリダイレクトする。
+    コメントがある場合は知見抽出をバックグラウンドで実行する。
     """
     if db.get_novel(novel_id) is None:
         raise HTTPException(status_code=404, detail="小説が見つかりません")
@@ -199,5 +212,10 @@ async def submit_feedback(
     if not 1 <= rating <= 5:
         raise HTTPException(status_code=422, detail="評価は1〜5で指定してください")
 
-    db.save_feedback(novel_id, rating, comment.strip())
+    clean_comment = comment.strip()
+    db.save_feedback(novel_id, rating, clean_comment)
+
+    if clean_comment:
+        background_tasks.add_task(_run_knowledge_extraction, clean_comment, novel_id)
+
     return RedirectResponse(url=f"/novels/{novel_id}#feedback", status_code=303)
