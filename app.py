@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi import BackgroundTasks, FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -187,14 +187,24 @@ async def update_progress(novel_id: int, body: ProgressRequest):
 # フィードバック送信
 # ──────────────────────────────────────────────
 
+def _run_knowledge_extraction(comment: str, novel_id: int) -> None:
+    """バックグラウンドタスク: 知見抽出を実行する。失敗してもログのみ記録する。"""
+    try:
+        knowledge.extract_and_save_knowledge(comment, novel_id=novel_id)
+    except Exception as exc:
+        logger.warning("知見抽出に失敗しました（novel_id=%d）: %s", novel_id, exc, exc_info=True)
+
+
 @app.post("/novels/{novel_id}/feedback")
 async def submit_feedback(
     novel_id: int,
+    background_tasks: BackgroundTasks,
     rating: int = Form(...),
     comment: str = Form("", max_length=2000),
 ):
     """
     フィードバック（評価・コメント）を保存してリダイレクトする。
+    コメントがある場合は知見抽出をバックグラウンドで実行する。
     """
     if db.get_novel(novel_id) is None:
         raise HTTPException(status_code=404, detail="小説が見つかりません")
@@ -205,11 +215,7 @@ async def submit_feedback(
     clean_comment = comment.strip()
     db.save_feedback(novel_id, rating, clean_comment)
 
-    # コメントがある場合のみ知見抽出を試みる（失敗してもフィードバック保存は成立済み）
     if clean_comment:
-        try:
-            knowledge.extract_and_save_knowledge(clean_comment, novel_id=novel_id)
-        except Exception as exc:
-            logger.warning("知見抽出に失敗しました（novel_id=%d）: %s", novel_id, exc)
+        background_tasks.add_task(_run_knowledge_extraction, clean_comment, novel_id)
 
     return RedirectResponse(url=f"/novels/{novel_id}#feedback", status_code=303)
