@@ -113,9 +113,9 @@
 <!-- フィードバックフォーム -->
 <div style="margin-top:3rem;" id="feedback">
   <h2>フィードバック</h2>
-  <form method="post" action="/novels/{{ novel.id }}/feedback" style="margin-top:1rem;">
+  <form method="post" action="/novels/{{ novel.id }}/feedback" style="margin-top:1rem;" id="feedback-form">
     <div style="margin-bottom:1rem;">
-      <div style="font-size:.9rem; margin-bottom:.4rem;">評価</div>
+      <div style="font-size:.9rem; margin-bottom:.4rem;">評価 <span style="color:var(--danger); font-size:.8rem;" id="rating-hint">（星を選んでください）</span></div>
       <div class="star-rating">
         {% for i in range(5, 0, -1) %}
           <input type="radio" id="star{{ i }}" name="rating" value="{{ i }}"
@@ -129,8 +129,27 @@
         placeholder="感想・改善点など（任意）"
         style="width:100%; max-width:600px; padding:.6rem; border:1px solid var(--border); border-radius:5px; font-family:inherit; font-size:.95rem; resize:vertical; background:var(--bg);">{% if feedbacks %}{{ feedbacks[0].comment }}{% endif %}</textarea>
     </div>
-    <button type="submit" class="btn btn-primary">送信</button>
+    <button type="submit" class="btn btn-primary" id="feedback-submit"
+      {% if not feedbacks %}disabled style="opacity:.4; cursor:not-allowed;"{% endif %}>送信</button>
   </form>
+  <script>
+    (function () {
+      const form = document.getElementById('feedback-form');
+      const btn  = document.getElementById('feedback-submit');
+      const hint = document.getElementById('rating-hint');
+      function updateBtn() {
+        const checked = form.querySelector('input[name="rating"]:checked');
+        btn.disabled = !checked;
+        btn.style.opacity = checked ? '1' : '.4';
+        btn.style.cursor  = checked ? 'pointer' : 'not-allowed';
+        hint.style.display = checked ? 'none' : '';
+      }
+      form.querySelectorAll('input[name="rating"]').forEach(function (r) {
+        r.addEventListener('change', updateBtn);
+      });
+      updateBtn();
+    })();
+  </script>
 </div>
 
 <!-- 過去のフィードバック -->
