@@ -6,6 +6,7 @@ FastAPI Webアプリ。
     uvicorn app:app --reload --port 8000
 """
 
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -15,9 +16,11 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 import db
+import knowledge
 
 app = FastAPI(title="novel-reader")
 templates = Jinja2Templates(directory="templates")
+logger = logging.getLogger(__name__)
 
 
 class ProgressRequest(BaseModel):
@@ -199,5 +202,14 @@ async def submit_feedback(
     if not 1 <= rating <= 5:
         raise HTTPException(status_code=422, detail="評価は1〜5で指定してください")
 
-    db.save_feedback(novel_id, rating, comment.strip())
+    clean_comment = comment.strip()
+    db.save_feedback(novel_id, rating, clean_comment)
+
+    # コメントがある場合のみ知見抽出を試みる（失敗してもフィードバック保存は成立済み）
+    if clean_comment:
+        try:
+            knowledge.extract_and_save_knowledge(clean_comment, novel_id=novel_id)
+        except Exception as exc:
+            logger.warning("知見抽出に失敗しました（novel_id=%d）: %s", novel_id, exc)
+
     return RedirectResponse(url=f"/novels/{novel_id}#feedback", status_code=303)
