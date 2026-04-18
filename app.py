@@ -12,11 +12,17 @@ from typing import Optional
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
 import db
 
 app = FastAPI(title="novel-reader")
 templates = Jinja2Templates(directory="templates")
+
+
+class ProgressRequest(BaseModel):
+    """読書進捗更新リクエストのスキーマ。"""
+    scroll_percent: int = Field(..., ge=0, le=100)
 
 # 新着判定の基準日数
 NEW_DAYS = 7
@@ -149,22 +155,19 @@ async def novel_detail(request: Request, novel_id: int):
 # ──────────────────────────────────────────────
 
 @app.post("/novels/{novel_id}/progress")
-async def update_progress(novel_id: int, request: Request):
+async def update_progress(novel_id: int, body: ProgressRequest):
     """
     スクロール進捗をJSONで受け取り更新する。
     scroll_percent が 95 以上の場合は読了とみなす。
 
     リクエストボディ: {"scroll_percent": 0〜100}
     """
-    body = await request.json()
-    scroll_percent: int = max(0, min(100, int(body.get("scroll_percent", 0))))
-    is_completed = scroll_percent >= 95
-
     if db.get_novel(novel_id) is None:
         raise HTTPException(status_code=404, detail="小説が見つかりません")
 
-    db.upsert_reading_progress(novel_id, scroll_percent, is_completed)
-    return JSONResponse({"ok": True, "scroll_percent": scroll_percent, "is_completed": is_completed})
+    is_completed = body.scroll_percent >= 95
+    db.upsert_reading_progress(novel_id, body.scroll_percent, is_completed)
+    return JSONResponse({"ok": True, "scroll_percent": body.scroll_percent, "is_completed": is_completed})
 
 
 # ──────────────────────────────────────────────

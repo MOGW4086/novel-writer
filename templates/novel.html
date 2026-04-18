@@ -198,14 +198,12 @@
       }, 2000);
     }, { passive: true });
 
-    // ページ離脱時に強制保存
+    // ページ離脱時に強制保存（Content-Type: application/json を明示するため Blob を使用）
     window.addEventListener('beforeunload', function () {
       const pct = calcPercent();
       if (Math.abs(pct - savedPercent) >= 2) {
-        navigator.sendBeacon(
-          '/novels/' + novelId + '/progress',
-          JSON.stringify({ scroll_percent: pct })
-        );
+        const blob = new Blob([JSON.stringify({ scroll_percent: pct })], { type: 'application/json' });
+        navigator.sendBeacon('/novels/' + novelId + '/progress', blob);
       }
     });
   })();
