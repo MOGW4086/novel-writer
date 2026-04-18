@@ -52,8 +52,8 @@ class TestRun(unittest.TestCase):
         novel_meta = _make_novel_meta()
         with patch("main.generator.generate_novel", return_value=novel_meta) as mock_gen:
             with patch("main.notifier.send_novel_notification") as mock_notify:
-                main._run(genre="ファンタジー", theme="冒険")
-                mock_gen.assert_called_once_with(genre_name="ファンタジー", theme="冒険")
+                main._run(genre="ファンタジー", theme="冒険", series=None, series_description="")
+                mock_gen.assert_called_once_with(genre_name="ファンタジー", theme="冒険", series_id=None)
                 mock_notify.assert_called_once()
 
     def test_通知失敗でも例外を送出しない(self):
@@ -64,7 +64,7 @@ class TestRun(unittest.TestCase):
                 side_effect=Exception("通知失敗"),
             ):
                 # 例外なく終了すれば成功
-                main._run(genre=None, theme=None)
+                main._run(genre=None, theme=None, series=None, series_description="")
 
     def test_通知ペイロードに正しい値が渡される(self):
         novel_meta = _make_novel_meta(title="テスト", genre="SF", theme="宇宙", word_count=5000)
@@ -75,7 +75,7 @@ class TestRun(unittest.TestCase):
 
         with patch("main.generator.generate_novel", return_value=novel_meta):
             with patch("main.notifier.send_novel_notification", side_effect=fake_notify):
-                main._run(genre=None, theme=None)
+                main._run(genre=None, theme=None, series=None, series_description="")
 
         p = captured["payload"]
         self.assertEqual(p.title, "テスト")
@@ -89,7 +89,7 @@ class TestRun(unittest.TestCase):
             side_effect=RuntimeError("生成失敗"),
         ):
             with self.assertRaises(RuntimeError):
-                main._run(genre=None, theme=None)
+                main._run(genre=None, theme=None, series=None, series_description="")
 
 
 class TestMain(unittest.TestCase):
@@ -105,15 +105,15 @@ class TestMain(unittest.TestCase):
     @patch("main.db.init_db")
     def test_自動実行モードで生成が呼ばれる(self, mock_init, mock_gen, mock_notify):
         self._run_main([])
-        # --manual なし: genre/theme は None
-        mock_gen.assert_called_once_with(genre_name=None, theme=None)
+        # --manual なし: genre/theme/series_id は None
+        mock_gen.assert_called_once_with(genre_name=None, theme=None, series_id=None)
 
     @patch("main.notifier.send_novel_notification")
     @patch("main.generator.generate_novel", return_value=_make_novel_meta())
     @patch("main.db.init_db")
     def test_手動実行でgenreとthemeが渡される(self, mock_init, mock_gen, mock_notify):
         self._run_main(["--manual", "--genre", "異世界転生", "--theme", "勇者"])
-        mock_gen.assert_called_once_with(genre_name="異世界転生", theme="勇者")
+        mock_gen.assert_called_once_with(genre_name="異世界転生", theme="勇者", series_id=None)
 
     @patch("main.notifier.send_novel_notification")
     @patch("main.generator.generate_novel", return_value=_make_novel_meta())
@@ -121,7 +121,7 @@ class TestMain(unittest.TestCase):
     def test_manualなしでgenreを渡してもNoneで呼ばれる(self, mock_init, mock_gen, mock_notify):
         # --genre だけ指定しても --manual なしなら無視される
         self._run_main(["--genre", "異世界転生"])
-        mock_gen.assert_called_once_with(genre_name=None, theme=None)
+        mock_gen.assert_called_once_with(genre_name=None, theme=None, series_id=None)
 
     @patch("main.generator.generate_novel", side_effect=RuntimeError("生成失敗"))
     @patch("main.db.init_db")

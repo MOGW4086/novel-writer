@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{{ series.title }} — novel-reader{% endblock %}
+
+{% block content %}
+<div style="margin-bottom:1rem;">
+  <a href="/" class="muted">← 一覧に戻る</a>
+</div>
+
+<h1>{{ series.title }}</h1>
+{% if series.description %}
+  <p class="muted" style="margin-bottom:1.5rem;">{{ series.description }}</p>
+{% endif %}
+
+<div class="section-title">エピソード一覧</div>
+
+{% for novel in novels %}
+<a href="/novels/{{ novel.id }}" style="display:block; text-decoration:none; color:inherit;">
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem;">
+      <div style="flex:1; min-width:0;">
+        <div style="display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap;">
+          {% if novel.episode_number %}
+            <span class="muted" style="font-size:.82rem; flex-shrink:0;">第{{ novel.episode_number }}話</span>
+          {% endif %}
+          <h3 style="display:inline;">
+            {{ novel.title }}
+            {% if novel.is_new %}<span class="badge badge-new">NEW</span>{% endif %}
+            {% if novel.reading_status == 'unread' %}
+              <span class="badge badge-unread">未読</span>
+            {% elif novel.reading_status == 'reading' %}
+              <span class="badge badge-reading">読書中</span>
+            {% elif novel.reading_status == 'completed' %}
+              <span class="badge badge-completed">読了</span>
+            {% endif %}
+          </h3>
+        </div>
+        <div class="meta">
+          {{ novel.genre }} &nbsp;·&nbsp; {{ novel.theme }}
+          &nbsp;·&nbsp; {{ novel.word_count | int }}字
+          &nbsp;·&nbsp; {{ novel.generated_at[:10] }}
+        </div>
+        {% if novel.reading_status == 'reading' and novel.scroll_percent %}
+          <div class="progress-bar-wrap" style="max-width:200px; margin-top:8px;">
+            <div class="progress-bar-fill" style="width:{{ novel.scroll_percent }}%;"></div>
+          </div>
+          <div class="muted" style="font-size:.75rem; margin-top:3px;">{{ novel.scroll_percent }}% 読了</div>
+        {% endif %}
+      </div>
+      <span style="color:var(--text-muted); font-size:1.2rem; flex-shrink:0;">›</span>
+    </div>
+  </div>
+</a>
+{% else %}
+<div class="card" style="text-align:center; color:var(--text-muted); padding:2rem;">
+  このシリーズにはまだ作品がありません。
+</div>
+{% endfor %}
+
+{% endblock %}
