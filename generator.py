@@ -297,6 +297,7 @@ def _generate_scene(
 def generate_novel(
     genre_name: Optional[str] = None,
     theme: Optional[str] = None,
+    series_id: Optional[int] = None,
 ) -> dict:
     """
     短編小説を2段階生成してDBに保存する。
@@ -304,6 +305,7 @@ def generate_novel(
     Args:
         genre_name: ジャンル名（Noneの場合は重み付きランダム選択）
         theme: テーマ（Noneの場合はサブテーマからランダム選択）
+        series_id: 所属シリーズID（Noneの場合はシリーズなし）
 
     Returns:
         保存した小説のメタデータ dict
@@ -359,12 +361,20 @@ def generate_novel(
     full_content = "\n\n".join(all_text_parts)
     print(f"[Stage 2] 完了: 総文字数={len(full_content)}字")
 
+    # シリーズのエピソード番号を自動採番
+    episode_number = None
+    if series_id is not None:
+        episode_number = db.get_next_episode_number(series_id)
+        print(f"[シリーズ] episode_number={episode_number}")
+
     # DBに保存
     novel_id = db.save_novel(
         title=title,
         genre=genre,
         theme=theme_selected,
         content=full_content,
+        series_id=series_id,
+        episode_number=episode_number,
     )
 
     print(f"[保存完了] novel_id={novel_id}")

@@ -9,6 +9,8 @@
     # 手動実行
     python main.py --manual
     python main.py --manual --genre "異世界転生" --theme "勇者召喚からの逃走"
+    python main.py --manual --series "魔法少女クロニクル"
+    python main.py --manual --series "魔法少女クロニクル" --series-description "魔法少女たちの戦い"
 """
 
 import argparse
@@ -60,23 +62,43 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="生成するテーマ（--manual 指定時のみ有効）。省略時はランダム選択。",
     )
+    parser.add_argument(
+        "--series",
+        type=str,
+        default=None,
+        help="所属シリーズ名。既存シリーズ名を指定すると追加、新規名を指定すると作成。省略時はシリーズなし。",
+    )
+    parser.add_argument(
+        "--series-description",
+        type=str,
+        default="",
+        help="新規シリーズを作成する場合の説明文（--series と併用）。",
+    )
     return parser.parse_args()
 
 
-def _run(genre: str | None, theme: str | None) -> None:
+def _run(genre: str | None, theme: str | None, series: str | None, series_description: str) -> None:
     """
     小説生成 → LINE通知 の一連の処理を実行する。
 
     Args:
         genre: ジャンル名（Noneの場合はランダム選択）。
         theme: テーマ（Noneの場合はランダム選択）。
+        series: シリーズ名（Noneの場合はシリーズなし）。
+        series_description: 新規シリーズ作成時の説明文。
 
     Raises:
         Exception: 生成で回復不能なエラーが発生した場合。
     """
+    # シリーズID解決（指定があれば取得または新規作成）
+    series_id = None
+    if series:
+        series_id = db.get_or_create_series(series, series_description)
+        logger.info("シリーズ決定: id=%d title=%r", series_id, series)
+
     # 小説生成
-    logger.info("小説生成を開始します（genre=%s / theme=%s）", genre, theme)
-    novel_meta = generator.generate_novel(genre_name=genre, theme=theme)
+    logger.info("小説生成を開始します（genre=%s / theme=%s / series_id=%s）", genre, theme, series_id)
+    novel_meta = generator.generate_novel(genre_name=genre, theme=theme, series_id=series_id)
     logger.info(
         "小説生成完了: id=%d title=%r genre=%s theme=%s word_count=%d",
         novel_meta["id"],
@@ -124,12 +146,14 @@ def main() -> None:
     db.init_db()
     logger.info("DB初期化完了")
 
-    # --genre / --theme は --manual なしでも受け付けるが、意味を持つのは --manual 時のみ
+    # --genre / --theme / --series は --manual なしでも受け付けるが、意味を持つのは --manual 時のみ
     genre = args.genre if args.manual else None
     theme = args.theme if args.manual else None
+    series = args.series if args.manual else None
+    series_description = args.series_description if args.manual else ""
 
     try:
-        _run(genre=genre, theme=theme)
+        _run(genre=genre, theme=theme, series=series, series_description=series_description)
     except Exception:
         logger.exception("実行中に予期しないエラーが発生しました")
         sys.exit(1)

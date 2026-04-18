@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}小説一覧 — novel-reader{% endblock %}
+
+{% block content %}
+<h1>小説一覧</h1>
+
+<!-- シリーズ一覧 -->
+{% if series_list %}
+<div class="section-title">シリーズ</div>
+{% for s in series_list %}
+<a href="/series/{{ s.id }}" style="display:block; text-decoration:none; color:inherit;">
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem;">
+      <div>
+        <h3>
+          {{ s.title }}
+          {% if s.is_new %}<span class="badge badge-new">NEW</span>{% endif %}
+          {% if s.unread_count and s.unread_count > 0 %}
+            <span class="badge badge-unread">未読 {{ s.unread_count }}</span>
+          {% endif %}
+        </h3>
+        {% if s.description %}
+          <div class="muted" style="margin-top:4px;">{{ s.description }}</div>
+        {% endif %}
+        <div class="meta">
+          {{ s.novel_count }} 作品
+          {% if s.latest_generated_at %}
+            &nbsp;·&nbsp; 最終更新: {{ s.latest_generated_at[:10] }}
+          {% endif %}
+        </div>
+      </div>
+      <span style="color:var(--text-muted); font-size:1.2rem; flex-shrink:0;">›</span>
+    </div>
+  </div>
+</a>
+{% endfor %}
+{% endif %}
+
+<!-- スタンドアロン小説 -->
+{% if standalone %}
+<div class="section-title">作品</div>
+{% for novel in standalone %}
+<a href="/novels/{{ novel.id }}" style="display:block; text-decoration:none; color:inherit;">
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem;">
+      <div style="flex:1; min-width:0;">
+        <h3>
+          {{ novel.title }}
+          {% if novel.is_new %}<span class="badge badge-new">NEW</span>{% endif %}
+          {% if novel.reading_status == 'unread' %}
+            <span class="badge badge-unread">未読</span>
+          {% elif novel.reading_status == 'reading' %}
+            <span class="badge badge-reading">読書中</span>
+          {% elif novel.reading_status == 'completed' %}
+            <span class="badge badge-completed">読了</span>
+          {% endif %}
+        </h3>
+        <div class="meta">
+          {{ novel.genre }} &nbsp;·&nbsp; {{ novel.theme }}
+          &nbsp;·&nbsp; {{ novel.word_count | int }}字
+          &nbsp;·&nbsp; {{ novel.generated_at[:10] }}
+        </div>
+        {% if novel.reading_status == 'reading' and novel.scroll_percent %}
+          <div class="progress-bar-wrap" style="max-width:200px;">
+            <div class="progress-bar-fill" style="width:{{ novel.scroll_percent }}%;"></div>
+          </div>
+          <div class="muted" style="font-size:.75rem; margin-top:3px;">{{ novel.scroll_percent }}% 読了</div>
+        {% endif %}
+      </div>
+      <span style="color:var(--text-muted); font-size:1.2rem; flex-shrink:0;">›</span>
+    </div>
+  </div>
+</a>
+{% endfor %}
+{% endif %}
+
+{% if not series_list and not standalone %}
+<div class="card" style="text-align:center; color:var(--text-muted); padding:3rem;">
+  まだ小説がありません。<br>
+  <code style="font-size:.85rem; margin-top:.5rem; display:inline-block;">python main.py --manual</code> で生成してください。
+</div>
+{% endif %}
+
+{% endblock %}

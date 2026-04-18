@@ -43,16 +43,36 @@ def init_db() -> None:
     """全テーブルを作成する。既に存在する場合はスキップ。"""
     with get_connection() as conn:
         conn.executescript("""
+            -- シリーズ（設定・世界観・主人公が共通の作品群）
+            CREATE TABLE IF NOT EXISTS series (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                title       TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at  TEXT NOT NULL
+            );
+
             -- 小説本文・メタデータ
             CREATE TABLE IF NOT EXISTS novels (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                title         TEXT    NOT NULL,
-                genre         TEXT    NOT NULL,
-                theme         TEXT    NOT NULL,
-                content       TEXT    NOT NULL,
-                word_count    INTEGER NOT NULL DEFAULT 0,
-                generated_at  TEXT    NOT NULL,
-                status        TEXT    NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published'))
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                title          TEXT    NOT NULL,
+                genre          TEXT    NOT NULL,
+                theme          TEXT    NOT NULL,
+                content        TEXT    NOT NULL,
+                word_count     INTEGER NOT NULL DEFAULT 0,
+                generated_at   TEXT    NOT NULL,
+                status         TEXT    NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
+                series_id      INTEGER REFERENCES series(id),
+                episode_number INTEGER
+            );
+
+            -- 読書進捗
+            CREATE TABLE IF NOT EXISTS reading_progress (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                novel_id       INTEGER NOT NULL UNIQUE REFERENCES novels(id),
+                scroll_percent INTEGER NOT NULL DEFAULT 0,
+                is_completed   INTEGER NOT NULL DEFAULT 0,
+                opened_at      TEXT NOT NULL,
+                last_read_at   TEXT NOT NULL
             );
 
             -- 汎用キャラクタープール
@@ -107,6 +127,16 @@ def init_db() -> None:
             );
         """)
 
+        # 既存DBに series_id / episode_number カラムが無い場合は追加
+        for alter_sql in [
+            "ALTER TABLE novels ADD COLUMN series_id INTEGER REFERENCES series(id)",
+            "ALTER TABLE novels ADD COLUMN episode_number INTEGER",
+        ]:
+            try:
+                conn.execute(alter_sql)
+            except sqlite3.OperationalError:
+                pass  # カラムが既に存在する場合はスキップ
+
 
 # ──────────────────────────────────────────────
 # novels テーブル
@@ -117,7 +147,9 @@ def save_novel(
     genre: str,
     theme: str,
     content: str,
-    status: str = "draft"
+    status: str = "draft",
+    series_id: Optional[int] = None,
+    episode_number: Optional[int] = None,
 ) -> int:
     """
     小説をDBに保存して採番されたIDを返す。
@@ -128,6 +160,8 @@ def save_novel(
         theme: テーマ
         content: 本文全文
         status: 状態（draft / published）
+        series_id: 所属シリーズID（Noneの場合はシリーズなし）
+        episode_number: エピソード番号（長編シリーズの場合）
 
     Returns:
         新規レコードのID
@@ -137,10 +171,10 @@ def save_novel(
     with get_connection() as conn:
         cur = conn.execute(
             """
-            INSERT INTO novels (title, genre, theme, content, word_count, generated_at, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO novels (title, genre, theme, content, word_count, generated_at, status, series_id, episode_number)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (title, genre, theme, content, word_count, generated_at, status),
+            (title, genre, theme, content, word_count, generated_at, status, series_id, episode_number),
         )
         return cur.lastrowid
 
@@ -583,3 +617,218 @@ def update_genre_setting(
         conn.execute(
             f"UPDATE genre_settings SET {set_clause} WHERE id = ?", values
         )
+
+
+# ──────────────────────────────────────────────
+# series テーブル
+# ──────────────────────────────────────────────
+
+def create_series(title: str, description: str = "") -> int:
+    """
+    シリーズを作成して採番されたIDを返す。
+
+    Args:
+        title: シリーズタイトル（一意）
+        description: シリーズ説明
+
+    Returns:
+        新規レコードのID
+
+    Raises:
+        sqlite3.IntegrityError: 同名シリーズが既に存在する場合
+    """
+    created_at = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO series (title, description, created_at) VALUES (?, ?, ?)",
+            (title, description, created_at),
+        )
+        return cur.lastrowid
+
+
+def get_series(series_id: int) -> Optional[dict]:
+    """指定IDのシリーズを取得する。"""
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM series WHERE id = ?", (series_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_series_by_title(title: str) -> Optional[dict]:
+    """タイトルでシリーズを取得する。"""
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM series WHERE title = ?", (title,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_or_create_series(title: str, description: str = "") -> int:
+    """
+    シリーズが存在すればそのIDを返し、なければ作成してIDを返す。
+
+    Args:
+        title: シリーズタイトル
+        description: シリーズ説明（新規作成時のみ使用）
+
+    Returns:
+        シリーズID
+    """
+    existing = get_series_by_title(title)
+    if existing:
+        return existing["id"]
+    return create_series(title, description)
+
+
+def get_series_list() -> list[dict]:
+    """
+    シリーズ一覧を最終更新日降順で取得する。
+    各シリーズの作品数・最終更新日・未読数を含む。
+
+    Returns:
+        シリーズデータのdictリスト
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                s.*,
+                COUNT(n.id)                                      AS novel_count,
+                MAX(n.generated_at)                              AS latest_generated_at,
+                SUM(CASE WHEN rp.id IS NULL THEN 1 ELSE 0 END)  AS unread_count
+            FROM series s
+            LEFT JOIN novels n ON n.series_id = s.id
+            LEFT JOIN reading_progress rp ON rp.novel_id = n.id
+            GROUP BY s.id
+            ORDER BY latest_generated_at DESC NULLS LAST
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_next_episode_number(series_id: int) -> int:
+    """
+    シリーズの次のエピソード番号（現在の最大値 + 1）を返す。
+    エピソードが0件の場合は1を返す。
+
+    Args:
+        series_id: シリーズID
+
+    Returns:
+        次のエピソード番号
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(episode_number), 0) + 1 AS next_ep FROM novels WHERE series_id = ?",
+            (series_id,),
+        ).fetchone()
+        return row["next_ep"]
+
+
+def get_novels_by_series(series_id: int) -> list[dict]:
+    """
+    シリーズの小説一覧をエピソード番号順（昇順）で取得する。
+    読書進捗情報も含む。
+
+    Args:
+        series_id: シリーズID
+
+    Returns:
+        小説データ（読書進捗付き）のdictリスト
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                n.*,
+                rp.scroll_percent,
+                rp.is_completed,
+                rp.opened_at,
+                rp.last_read_at
+            FROM novels n
+            LEFT JOIN reading_progress rp ON rp.novel_id = n.id
+            WHERE n.series_id = ?
+            ORDER BY COALESCE(n.episode_number, 9999), n.generated_at
+            """,
+            (series_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_standalone_novels(limit: int = 50, offset: int = 0) -> list[dict]:
+    """
+    シリーズに属さない小説一覧を生成日降順で取得する。
+    読書進捗情報も含む。
+
+    Args:
+        limit: 取得件数上限
+        offset: 取得開始位置
+
+    Returns:
+        小説データ（読書進捗付き）のdictリスト
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                n.*,
+                rp.scroll_percent,
+                rp.is_completed,
+                rp.opened_at,
+                rp.last_read_at
+            FROM novels n
+            LEFT JOIN reading_progress rp ON rp.novel_id = n.id
+            WHERE n.series_id IS NULL
+            ORDER BY n.generated_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ──────────────────────────────────────────────
+# reading_progress テーブル
+# ──────────────────────────────────────────────
+
+def upsert_reading_progress(
+    novel_id: int,
+    scroll_percent: int,
+    is_completed: bool = False,
+) -> None:
+    """
+    読書進捗を更新する。レコードがなければ新規作成（UPSERT）。
+
+    Args:
+        novel_id: 小説ID
+        scroll_percent: スクロール進捗（0〜100）
+        is_completed: 読了フラグ
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    completed_int = 1 if is_completed else 0
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO reading_progress (novel_id, scroll_percent, is_completed, opened_at, last_read_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(novel_id) DO UPDATE SET
+                scroll_percent = excluded.scroll_percent,
+                is_completed   = MAX(is_completed, excluded.is_completed),
+                last_read_at   = excluded.last_read_at
+            """,
+            (novel_id, scroll_percent, completed_int, now, now),
+        )
+
+
+def get_reading_progress(novel_id: int) -> Optional[dict]:
+    """
+    指定小説の読書進捗を取得する。
+
+    Args:
+        novel_id: 小説ID
+
+    Returns:
+        読書進捗のdict、未開封の場合はNone
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM reading_progress WHERE novel_id = ?", (novel_id,)
+        ).fetchone()
+        return dict(row) if row else None

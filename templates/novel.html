@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}{{ novel.title }} — novel-reader{% endblock %}
+
+{% block head %}
+<style>
+  /* 小説本文 */
+  .novel-body {
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", "游明朝", serif;
+    font-size: 1.05rem;
+    line-height: 2;
+    max-width: 680px;
+    margin: 0 auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  /* 読書進捗バー（固定） */
+  #reading-progress-bar {
+    position: fixed;
+    top: 52px;
+    left: 0;
+    width: 0%;
+    height: 3px;
+    background: var(--reading);
+    z-index: 200;
+    transition: width .2s;
+  }
+  #reading-progress-bar.completed { background: var(--completed); }
+
+  /* 星評価 */
+  .star-rating { display: flex; flex-direction: row-reverse; gap: 4px; }
+  .star-rating input { display: none; }
+  .star-rating label {
+    font-size: 1.6rem;
+    color: var(--border);
+    cursor: pointer;
+    transition: color .15s;
+  }
+  .star-rating input:checked ~ label,
+  .star-rating label:hover,
+  .star-rating label:hover ~ label { color: var(--star-on); }
+
+  /* フィードバック一覧の星 */
+  .stars-display { color: var(--star-on); letter-spacing: 2px; }
+
+  /* エピソードナビ */
+  .ep-nav { display: flex; justify-content: space-between; margin-top: 2rem; }
+  .ep-nav a { font-size: .9rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- 読書進捗バー -->
+<div id="reading-progress-bar"></div>
+
+<!-- パンくず -->
+<div style="margin-bottom:1rem; font-size:.88rem;">
+  <a href="/" class="muted">一覧</a>
+  {% if series %}
+    <span class="muted"> › </span>
+    <a href="/series/{{ series.id }}" class="muted">{{ series.title }}</a>
+  {% endif %}
+  <span class="muted"> › </span>{{ novel.title }}
+</div>
+
+<!-- タイトル・メタ情報 -->
+<div style="margin-bottom: 2rem;">
+  <h1 style="margin-bottom:.5rem;">
+    {% if novel.episode_number %}
+      <span class="muted" style="font-size:.9rem; font-weight:400;">第{{ novel.episode_number }}話 &nbsp;</span>
+    {% endif %}
+    {{ novel.title }}
+  </h1>
+  <div class="meta">
+    {{ novel.genre }} &nbsp;·&nbsp; {{ novel.theme }}
+    &nbsp;·&nbsp; {{ novel.word_count | int }}字
+    &nbsp;·&nbsp; {{ novel.generated_at[:10] }}
+    {% if progress and progress.is_completed %}
+      &nbsp;·&nbsp; <span style="color:var(--completed);">読了</span>
+    {% elif progress and progress.scroll_percent %}
+      &nbsp;·&nbsp; <span style="color:var(--reading);">{{ progress.scroll_percent }}% 読了</span>
+    {% endif %}
+  </div>
+</div>
+
+<!-- 本文 -->
+<div class="novel-body" id="novel-content">{{ novel.content }}</div>
+
+<!-- エピソードナビ（シリーズ内） -->
+{% if series_novels %}
+{% set current_idx = namespace(v=-1) %}
+{% for n in series_novels %}
+  {% if n.id == novel.id %}{% set current_idx.v = loop.index0 %}{% endif %}
+{% endfor %}
+<div class="ep-nav">
+  {% if current_idx.v > 0 %}
+    <a href="/novels/{{ series_novels[current_idx.v - 1].id }}">
+      ← 前の話: {{ series_novels[current_idx.v - 1].title }}
+    </a>
+  {% else %}
+    <span></span>
+  {% endif %}
+  {% if current_idx.v >= 0 and current_idx.v < series_novels | length - 1 %}
+    <a href="/novels/{{ series_novels[current_idx.v + 1].id }}">
+      次の話: {{ series_novels[current_idx.v + 1].title }} →
+    </a>
+  {% else %}
+    <span></span>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- フィードバックフォーム -->
+<div style="margin-top:3rem;" id="feedback">
+  <h2>フィードバック</h2>
+  <form method="post" action="/novels/{{ novel.id }}/feedback" style="margin-top:1rem;">
+    <div style="margin-bottom:1rem;">
+      <div style="font-size:.9rem; margin-bottom:.4rem;">評価</div>
+      <div class="star-rating">
+        {% for i in range(5, 0, -1) %}
+          <input type="radio" id="star{{ i }}" name="rating" value="{{ i }}"
+            {% if feedbacks and feedbacks[0].rating == i %}checked{% endif %}>
+          <label for="star{{ i }}">&#9733;</label>
+        {% endfor %}
+      </div>
+    </div>
+    <div style="margin-bottom:1rem;">
+      <textarea name="comment" rows="4"
+        placeholder="感想・改善点など（任意）"
+        style="width:100%; max-width:600px; padding:.6rem; border:1px solid var(--border); border-radius:5px; font-family:inherit; font-size:.95rem; resize:vertical; background:var(--bg);">{% if feedbacks %}{{ feedbacks[0].comment }}{% endif %}</textarea>
+    </div>
+    <button type="submit" class="btn btn-primary">送信</button>
+  </form>
+</div>
+
+<!-- 過去のフィードバック -->
+{% if feedbacks %}
+<div style="margin-top:2rem;">
+  <h2>過去のフィードバック</h2>
+  {% for fb in feedbacks %}
+  <div class="card" style="margin-bottom:.75rem;">
+    <div class="stars-display">
+      {{ "★" * fb.rating }}{{ "☆" * (5 - fb.rating) }}
+    </div>
+    {% if fb.comment %}
+      <div style="margin-top:.4rem;">{{ fb.comment }}</div>
+    {% endif %}
+    <div class="meta">{{ fb.created_at[:10] }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<script>
+  (function () {
+    const bar = document.getElementById('reading-progress-bar');
+    const novelId = {{ novel.id }};
+    let savedPercent = {{ progress.scroll_percent if progress and progress.scroll_percent else 0 }};
+    let timer = null;
+
+    function calcPercent() {
+      const scrolled = window.scrollY;
+      const total = document.documentElement.scrollHeight - window.innerHeight;
+      return total > 0 ? Math.round((scrolled / total) * 100) : 0;
+    }
+
+    function updateBar(pct) {
+      bar.style.width = pct + '%';
+      if (pct >= 95) bar.classList.add('completed');
+      else bar.classList.remove('completed');
+    }
+
+    // 初期位置を復元（読書中の場合）
+    if (savedPercent > 0 && savedPercent < 95) {
+      const total = document.documentElement.scrollHeight - window.innerHeight;
+      window.scrollTo({ top: total * savedPercent / 100, behavior: 'instant' });
+    }
+    updateBar(savedPercent);
+
+    function saveProgress(pct) {
+      fetch('/novels/' + novelId + '/progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scroll_percent: pct }),
+      }).catch(() => {});
+      savedPercent = pct;
+    }
+
+    window.addEventListener('scroll', function () {
+      const pct = calcPercent();
+      updateBar(pct);
+      // スロットル：2秒ごとにサーバーへ送信
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        if (Math.abs(pct - savedPercent) >= 2 || pct >= 95) {
+          saveProgress(pct);
+        }
+      }, 2000);
+    }, { passive: true });
+
+    // ページ離脱時に強制保存（Content-Type: application/json を明示するため Blob を使用）
+    window.addEventListener('beforeunload', function () {
+      const pct = calcPercent();
+      if (Math.abs(pct - savedPercent) >= 2) {
+        const blob = new Blob([JSON.stringify({ scroll_percent: pct })], { type: 'application/json' });
+        navigator.sendBeacon('/novels/' + novelId + '/progress', blob);
+      }
+    });
+  })();
+</script>
+{% endblock %}
