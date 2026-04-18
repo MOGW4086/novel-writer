@@ -50,10 +50,12 @@ def _reading_status(novel: dict) -> str:
 
 
 def _enrich_novel(novel: dict) -> dict:
-    """一覧表示用に is_new と reading_status を付与する。"""
-    novel["is_new"] = _is_new(novel.get("generated_at", ""))
-    novel["reading_status"] = _reading_status(novel)
-    return novel
+    """一覧表示用に is_new と reading_status を付与したコピーを返す。"""
+    return {
+        **novel,
+        "is_new": _is_new(novel.get("generated_at", "")),
+        "reading_status": _reading_status(novel),
+    }
 
 
 # ──────────────────────────────────────────────
