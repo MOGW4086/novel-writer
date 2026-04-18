@@ -94,7 +94,7 @@ uvicorn app:app --host 127.0.0.1 --port 8000
 1. デスクトップを右クリック →「新規作成」→「ショートカット」
 2. 場所に以下を入力して「次へ」
    ```
-   \\wsl$\Ubuntu\home\kitamiki\novel-writer\小説を読む.bat
+   \\wsl$\Ubuntu\home\（ユーザー名）\novel-writer\小説を読む.bat
    ```
 3. 名前を「小説を読む」として「完了」
 
@@ -115,7 +115,7 @@ uvicorn app:app --host 127.0.0.1 --port 8000
 | 名前 | novel-writer 自動生成 |
 | トリガー | 毎週（例: 日曜日 09:00） |
 | 操作 | プログラムの開始 |
-| プログラム | `\\wsl$\Ubuntu\home\kitamiki\novel-writer\小説生成.bat` |
+| プログラム | `\\wsl$\Ubuntu\home\（ユーザー名）\novel-writer\小説生成.bat` |
 | 開始 | （空欄でよい） |
 
 4.「完了」をクリックして登録
