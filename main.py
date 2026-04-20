@@ -136,8 +136,16 @@ def _list_series() -> None:
         return
 
     title_width = 30
-    print(f"{'ID':>4}  {_ljust_display('タイトル', title_width)}  {_ljust_display('話数', 4)}  {_ljust_display('未読', 4)}  最終更新")
-    print("-" * (4 + 2 + title_width + 2 + 4 + 2 + 4 + 2 + 10))
+    count_width = 4
+    unread_width = 4
+    latest_width = 10
+    print(
+        f"{'ID':>4}  {_ljust_display('タイトル', title_width)}  "
+        f"{_ljust_display('話数', count_width)}  "
+        f"{_ljust_display('未読', unread_width)}  "
+        f"{_ljust_display('最終更新', latest_width)}"
+    )
+    print("-" * (4 + 2 + title_width + 2 + count_width + 2 + unread_width + 2 + latest_width))
     for s in series_list:
         latest = (s.get("latest_generated_at") or "")[:10]
         title = _ljust_display(_truncate_display(s["title"], title_width), title_width)
