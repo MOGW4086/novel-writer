@@ -4,6 +4,32 @@
 {% block content %}
 <h1>小説一覧</h1>
 
+<!-- フィードバック待ちセクション（スタンドアロン） -->
+{% if feedback_needed %}
+<div class="section-title" style="color:var(--needs-feedback);">フィードバック待ち</div>
+{% for novel in feedback_needed %}
+<a href="/novels/{{ novel.id }}" style="display:block; text-decoration:none; color:inherit;">
+  <div class="card" style="border-left:3px solid var(--needs-feedback);">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem;">
+      <div style="flex:1; min-width:0;">
+        <h3>
+          {{ novel.title }}
+          {% if novel.is_new %}<span class="badge badge-new">NEW</span>{% endif %}
+          <span class="badge badge-needs-feedback">フィードバック待ち</span>
+        </h3>
+        <div class="meta">
+          {{ novel.genre }} &nbsp;·&nbsp; {{ novel.theme }}
+          &nbsp;·&nbsp; {{ novel.word_count | int }}字
+          &nbsp;·&nbsp; {{ novel.generated_at[:10] }}
+        </div>
+      </div>
+      <span style="color:var(--text-muted); font-size:1.2rem; flex-shrink:0;">›</span>
+    </div>
+  </div>
+</a>
+{% endfor %}
+{% endif %}
+
 <!-- シリーズ一覧 -->
 {% if series_list %}
 <div class="section-title">シリーズ</div>
@@ -15,7 +41,9 @@
         <h3>
           {{ s.title }}
           {% if s.is_new %}<span class="badge badge-new">NEW</span>{% endif %}
-          {% if s.unread_count and s.unread_count > 0 %}
+          {% if s.needs_feedback_count and s.needs_feedback_count > 0 %}
+            <span class="badge badge-needs-feedback">FB待ち {{ s.needs_feedback_count }}</span>
+          {% elif s.unread_count and s.unread_count > 0 %}
             <span class="badge badge-unread">未読 {{ s.unread_count }}</span>
           {% endif %}
         </h3>

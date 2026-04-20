@@ -225,6 +225,15 @@
         navigator.sendBeacon('/novels/' + novelId + '/progress', blob);
       }
     });
+
+    // 全文が1画面に収まる短編は読み込み完了時点で自動読了
+    window.addEventListener('load', function () {
+      const total = document.documentElement.scrollHeight - window.innerHeight;
+      if (total <= 5 && savedPercent < 95) {
+        updateBar(100);
+        saveProgress(100);
+      }
+    });
   })();
 </script>
 {% endblock %}
