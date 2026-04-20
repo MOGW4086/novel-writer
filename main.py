@@ -19,6 +19,7 @@
 import argparse
 import logging
 import sys
+import unicodedata
 
 import db
 import generator
@@ -85,6 +86,25 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _display_width(text: str) -> int:
+    """
+    端末での表示幅を返す。全角文字は2、半角文字は1として計算する。
+    f-string の :<N パディングは文字数基準のため、日本語混じりテキストの
+    列揃えには unicodedata.east_asian_width による幅計算が必要。
+    """
+    width = 0
+    for ch in text:
+        eaw = unicodedata.east_asian_width(ch)
+        width += 2 if eaw in ("W", "F") else 1
+    return width
+
+
+def _ljust_display(text: str, width: int) -> str:
+    """表示幅を考慮して左詰めパディングした文字列を返す。"""
+    padding = width - _display_width(text)
+    return text + " " * max(padding, 0)
+
+
 def _list_series() -> None:
     """
     登録済みシリーズの一覧を標準出力に表示する。
@@ -93,12 +113,13 @@ def _list_series() -> None:
     if not series_list:
         print("シリーズはまだ登録されていません。")
         return
-    print(f"{'ID':>4}  {'タイトル':<30}  {'話数':>4}  {'未読':>4}  最終更新")
-    print("-" * 70)
+    title_width = 30
+    print(f"{'ID':>4}  {_ljust_display('タイトル', title_width)}  {'話数':>4}  {'未読':>4}  最終更新")
+    print("-" * (4 + 2 + title_width + 2 + 6 + 2 + 6 + 2 + 10))
     for s in series_list:
         latest = (s.get("latest_generated_at") or "")[:10]
         print(
-            f"{s['id']:>4}  {s['title']:<30}  "
+            f"{s['id']:>4}  {_ljust_display(s['title'], title_width)}  "
             f"{s.get('novel_count', 0):>4}話  "
             f"{s.get('unread_count', 0):>4}  "
             f"{latest}"
