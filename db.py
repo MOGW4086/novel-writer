@@ -127,6 +127,16 @@ def init_db() -> None:
             );
         """)
 
+        # 相関サブクエリで頻繁に参照するカラムにインデックスを追加
+        conn.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_feedback_novel_id
+                ON feedback(novel_id);
+            CREATE INDEX IF NOT EXISTS idx_reading_progress_novel_id
+                ON reading_progress(novel_id);
+            CREATE INDEX IF NOT EXISTS idx_novels_series_id
+                ON novels(series_id);
+        """)
+
         # 既存DBに series_id / episode_number カラムが無い場合は追加
         for alter_sql in [
             "ALTER TABLE novels ADD COLUMN series_id INTEGER REFERENCES series(id)",

@@ -43,7 +43,8 @@
           {% if s.is_new %}<span class="badge badge-new">NEW</span>{% endif %}
           {% if s.needs_feedback_count and s.needs_feedback_count > 0 %}
             <span class="badge badge-needs-feedback">FB待ち {{ s.needs_feedback_count }}</span>
-          {% elif s.unread_count and s.unread_count > 0 %}
+          {% endif %}
+          {% if s.unread_count and s.unread_count > 0 %}
             <span class="badge badge-unread">未読 {{ s.unread_count }}</span>
           {% endif %}
         </h3>
