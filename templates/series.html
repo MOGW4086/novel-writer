@@ -30,7 +30,11 @@
             {% elif novel.reading_status == 'reading' %}
               <span class="badge badge-reading">読書中</span>
             {% elif novel.reading_status == 'completed' %}
-              <span class="badge badge-completed">読了</span>
+              {% if not novel.has_feedback %}
+                <span class="badge badge-needs-feedback">FB待ち</span>
+              {% else %}
+                <span class="badge badge-completed">読了</span>
+              {% endif %}
             {% endif %}
           </h3>
         </div>

@@ -53,11 +53,12 @@ def _reading_status(novel: dict) -> str:
 
 
 def _enrich_novel(novel: dict) -> dict:
-    """一覧表示用に is_new と reading_status を付与したコピーを返す。"""
+    """一覧表示用に is_new / reading_status / has_feedback を付与したコピーを返す。"""
     return {
         **novel,
         "is_new": _is_new(novel.get("generated_at", "")),
         "reading_status": _reading_status(novel),
+        "has_feedback": bool(novel.get("feedback_count", 0)),
     }
 
 
@@ -69,19 +70,26 @@ def _enrich_novel(novel: dict) -> dict:
 async def index(request: Request):
     """
     小説一覧ページ。シリーズ一覧とスタンドアロン小説を表示する。
+    スタンドアロン小説は「フィードバック待ち」と「未読・読書中」に分けて渡す。
     """
     series_list = db.get_series_list()
-    standalone = [_enrich_novel(n) for n in db.get_standalone_novels(limit=100)]
+    all_standalone = [_enrich_novel(n) for n in db.get_standalone_novels(limit=100)]
 
     # シリーズにも新着フラグを付与（最終更新日で判定）
     for s in series_list:
         s["is_new"] = _is_new(s.get("latest_generated_at") or "")
+
+    # 読了済みでフィードバック未記入の作品を分離
+    feedback_needed = [n for n in all_standalone if n["reading_status"] == "completed" and not n["has_feedback"]]
+    feedback_needed_ids = {n["id"] for n in feedback_needed}
+    standalone = [n for n in all_standalone if n["id"] not in feedback_needed_ids]
 
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "series_list": series_list,
+            "feedback_needed": feedback_needed,
             "standalone": standalone,
         },
     )

@@ -127,6 +127,16 @@ def init_db() -> None:
             );
         """)
 
+        # 相関サブクエリで頻繁に参照するカラムにインデックスを追加
+        conn.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_feedback_novel_id
+                ON feedback(novel_id);
+            CREATE INDEX IF NOT EXISTS idx_reading_progress_novel_id
+                ON reading_progress(novel_id);
+            CREATE INDEX IF NOT EXISTS idx_novels_series_id
+                ON novels(series_id);
+        """)
+
         # 既存DBに series_id / episode_number カラムが無い場合は追加
         for alter_sql in [
             "ALTER TABLE novels ADD COLUMN series_id INTEGER REFERENCES series(id)",
@@ -692,7 +702,12 @@ def get_series_list() -> list[dict]:
                 s.*,
                 COUNT(n.id)                                      AS novel_count,
                 MAX(n.generated_at)                              AS latest_generated_at,
-                SUM(CASE WHEN rp.id IS NULL THEN 1 ELSE 0 END)  AS unread_count
+                SUM(CASE WHEN rp.id IS NULL THEN 1 ELSE 0 END)  AS unread_count,
+                SUM(
+                    CASE WHEN rp.is_completed = 1
+                              AND (SELECT COUNT(*) FROM feedback WHERE novel_id = n.id) = 0
+                         THEN 1 ELSE 0 END
+                )                                                AS needs_feedback_count
             FROM series s
             LEFT JOIN novels n ON n.series_id = s.id
             LEFT JOIN reading_progress rp ON rp.novel_id = n.id
@@ -725,13 +740,13 @@ def get_next_episode_number(series_id: int) -> int:
 def get_novels_by_series(series_id: int) -> list[dict]:
     """
     シリーズの小説一覧をエピソード番号順（昇順）で取得する。
-    読書進捗情報も含む。
+    読書進捗・フィードバック件数も含む。
 
     Args:
         series_id: シリーズID
 
     Returns:
-        小説データ（読書進捗付き）のdictリスト
+        小説データ（読書進捗・feedback_count付き）のdictリスト
     """
     with get_connection() as conn:
         rows = conn.execute(
@@ -741,7 +756,8 @@ def get_novels_by_series(series_id: int) -> list[dict]:
                 rp.scroll_percent,
                 rp.is_completed,
                 rp.opened_at,
-                rp.last_read_at
+                rp.last_read_at,
+                (SELECT COUNT(*) FROM feedback WHERE novel_id = n.id) AS feedback_count
             FROM novels n
             LEFT JOIN reading_progress rp ON rp.novel_id = n.id
             WHERE n.series_id = ?
@@ -755,14 +771,14 @@ def get_novels_by_series(series_id: int) -> list[dict]:
 def get_standalone_novels(limit: int = 50, offset: int = 0) -> list[dict]:
     """
     シリーズに属さない小説一覧を生成日降順で取得する。
-    読書進捗情報も含む。
+    読書進捗・フィードバック件数も含む。
 
     Args:
         limit: 取得件数上限
         offset: 取得開始位置
 
     Returns:
-        小説データ（読書進捗付き）のdictリスト
+        小説データ（読書進捗・feedback_count付き）のdictリスト
     """
     with get_connection() as conn:
         rows = conn.execute(
@@ -772,7 +788,8 @@ def get_standalone_novels(limit: int = 50, offset: int = 0) -> list[dict]:
                 rp.scroll_percent,
                 rp.is_completed,
                 rp.opened_at,
-                rp.last_read_at
+                rp.last_read_at,
+                (SELECT COUNT(*) FROM feedback WHERE novel_id = n.id) AS feedback_count
             FROM novels n
             LEFT JOIN reading_progress rp ON rp.novel_id = n.id
             WHERE n.series_id IS NULL
