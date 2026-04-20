@@ -315,6 +315,8 @@ def generate_novel(
             "genre": str,
             "theme": str,
             "word_count": int,
+            "series_id": Optional[int],
+            "episode_number": Optional[int],
         }
 
     Raises:
@@ -385,4 +387,6 @@ def generate_novel(
         "genre": genre,
         "theme": theme_selected,
         "word_count": len(full_content),
+        "series_id": series_id,
+        "episode_number": episode_number,
     }

@@ -43,6 +43,8 @@ class NovelNotifyPayload:
     genre: str
     theme: str
     char_count: int
+    series_name: Optional[str] = None
+    episode_number: Optional[int] = None
 
     def __post_init__(self) -> None:
         """フィールドの基本バリデーションを行う。"""
@@ -62,13 +64,17 @@ def _format_message(payload: NovelNotifyPayload) -> str:
     Returns:
         整形済みのLINE通知本文。
     """
-    return (
-        "【小説生成完了】\n"
-        f"タイトル：{payload.title}\n"
-        f"ジャンル：{payload.genre}\n"
-        f"テーマ：{payload.theme}\n"
-        f"文字数：{payload.char_count:,}字"
-    )
+    lines = [
+        "【小説生成完了】",
+        f"タイトル：{payload.title}",
+        f"ジャンル：{payload.genre}",
+        f"テーマ：{payload.theme}",
+        f"文字数：{payload.char_count:,}字",
+    ]
+    if payload.series_name:
+        ep = f" 第{payload.episode_number}話" if payload.episode_number is not None else ""
+        lines.append(f"シリーズ：{payload.series_name}{ep}")
+    return "\n".join(lines)
 
 
 def _get_credentials() -> Tuple[str, str]:

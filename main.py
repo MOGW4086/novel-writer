@@ -11,11 +11,15 @@
     python main.py --manual --genre "異世界転生" --theme "勇者召喚からの逃走"
     python main.py --manual --series "魔法少女クロニクル"
     python main.py --manual --series "魔法少女クロニクル" --series-description "魔法少女たちの戦い"
+
+    # シリーズ一覧表示
+    python main.py --list-series
 """
 
 import argparse
 import logging
 import sys
+import unicodedata
 
 import db
 import generator
@@ -74,7 +78,75 @@ def _parse_args() -> argparse.Namespace:
         default="",
         help="新規シリーズを作成する場合の説明文（--series と併用）。",
     )
+    parser.add_argument(
+        "--list-series",
+        action="store_true",
+        help="登録済みシリーズの一覧を表示して終了する。",
+    )
     return parser.parse_args()
+
+
+def _display_width(text: str) -> int:
+    """
+    端末での表示幅を返す。全角文字は2、半角文字は1として計算する。
+    f-string の :<N パディングは文字数基準のため、日本語混じりテキストの
+    列揃えには unicodedata.east_asian_width による幅計算が必要。
+    """
+    width = 0
+    for ch in text:
+        eaw = unicodedata.east_asian_width(ch)
+        width += 2 if eaw in ("W", "F") else 1
+    return width
+
+
+def _ljust_display(text: str, width: int) -> str:
+    """表示幅を考慮して左詰めパディングした文字列を返す。"""
+    padding = width - _display_width(text)
+    return text + " " * max(padding, 0)
+
+
+def _truncate_display(text: str, width: int) -> str:
+    """表示幅を超える場合は末尾を … で切り詰める。"""
+    if _display_width(text) <= width:
+        return text
+    result = ""
+    current = 0
+    for ch in text:
+        w = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        if current + w > width - 1:
+            break
+        result += ch
+        current += w
+    return result + "…"
+
+
+def _list_series() -> None:
+    """
+    登録済みシリーズの一覧を標準出力に表示する。
+    DB接続失敗時はエラーメッセージを標準エラー出力に表示して終了する。
+    """
+    try:
+        series_list = db.get_series_list()
+    except Exception as e:
+        print(f"シリーズ一覧の取得に失敗しました: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if not series_list:
+        print("シリーズはまだ登録されていません。")
+        return
+
+    title_width = 30
+    print(f"{'ID':>4}  {_ljust_display('タイトル', title_width)}  {_ljust_display('話数', 4)}  {_ljust_display('未読', 4)}  最終更新")
+    print("-" * (4 + 2 + title_width + 2 + 4 + 2 + 4 + 2 + 10))
+    for s in series_list:
+        latest = (s.get("latest_generated_at") or "")[:10]
+        title = _ljust_display(_truncate_display(s["title"], title_width), title_width)
+        print(
+            f"{s['id']:>4}  {title}  "
+            f"{s.get('novel_count', 0):>2}話  "
+            f"{s.get('unread_count', 0):>4}  "
+            f"{latest}"
+        )
 
 
 def _run(genre: str | None, theme: str | None, series: str | None, series_description: str) -> None:
@@ -114,6 +186,8 @@ def _run(genre: str | None, theme: str | None, series: str | None, series_descri
         genre=novel_meta["genre"],
         theme=novel_meta["theme"],
         char_count=novel_meta["word_count"],
+        series_name=series,
+        episode_number=novel_meta["episode_number"],
     )
     try:
         notifier.send_novel_notification(payload)
@@ -139,11 +213,16 @@ def main() -> None:
 
     args = _parse_args()
 
-    mode = "手動" if args.manual else "自動（スケジューラ）"
-    logger.info("=== novel-writer 起動 [%s実行] ===", mode)
-
     # DB初期化（テーブルが未作成の場合のみ CREATE TABLE を実行）
     db.init_db()
+
+    # --list-series は一覧表示のみで終了
+    if args.list_series:
+        _list_series()
+        return
+
+    mode = "手動" if args.manual else "自動（スケジューラ）"
+    logger.info("=== novel-writer 起動 [%s実行] ===", mode)
     logger.info("DB初期化完了")
 
     # --genre / --theme / --series は --manual なしでも受け付けるが、意味を持つのは --manual 時のみ

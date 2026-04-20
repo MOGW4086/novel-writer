@@ -12,7 +12,10 @@ import main
 
 def _make_novel_meta(**kwargs) -> dict:
     """テスト用小説メタデータを生成する。"""
-    defaults = dict(id=1, title="テスト小説", genre="ファンタジー", theme="冒険", word_count=3000)
+    defaults = dict(
+        id=1, title="テスト小説", genre="ファンタジー", theme="冒険",
+        word_count=3000, series_id=None, episode_number=None,
+    )
     defaults.update(kwargs)
     return defaults
 
@@ -43,6 +46,50 @@ class TestParseArgs(unittest.TestCase):
         args = self._parse(["--manual", "--genre", "異世界転生", "--theme", "勇者召喚"])
         self.assertEqual(args.genre, "異世界転生")
         self.assertEqual(args.theme, "勇者召喚")
+
+    def test_list_seriesフラグを認識する(self):
+        args = self._parse(["--list-series"])
+        self.assertTrue(args.list_series)
+
+
+class TestListSeries(unittest.TestCase):
+    """_list_series の出力・エラーハンドリングテスト。"""
+
+    @patch("main.db.get_series_list", return_value=[])
+    def test_シリーズ未登録時にメッセージを表示する(self, _):
+        with patch("builtins.print") as mock_print:
+            main._list_series()
+        mock_print.assert_called_once_with("シリーズはまだ登録されていません。")
+
+    @patch("main.db.get_series_list", return_value=[
+        {"id": 1, "title": "魔法少女クロニクル", "novel_count": 3,
+         "unread_count": 1, "latest_generated_at": "2026-04-18T10:00:00"},
+    ])
+    def test_シリーズ一覧にタイトルとエピソード数が含まれる(self, _):
+        output_lines = []
+        with patch("builtins.print", side_effect=output_lines.append):
+            main._list_series()
+        combined = "\n".join(str(l) for l in output_lines)
+        self.assertIn("魔法少女クロニクル", combined)
+        self.assertIn("2026-04-18", combined)
+
+    @patch("main.db.get_series_list", side_effect=Exception("DB接続失敗"))
+    def test_DB取得失敗でsys_exitを呼ぶ(self, _):
+        with self.assertRaises(SystemExit) as ctx:
+            main._list_series()
+        self.assertEqual(ctx.exception.code, 1)
+
+    @patch("main.db.get_series_list", return_value=[
+        {"id": 1, "title": "あ" * 20, "novel_count": 1,
+         "unread_count": 0, "latest_generated_at": "2026-04-18T10:00:00"},
+    ])
+    def test_長いタイトルが切り詰められる(self, _):
+        output_lines = []
+        with patch("builtins.print", side_effect=output_lines.append):
+            main._list_series()
+        # タイトル列が title_width=30 を超えないことを確認（…で切り詰め）
+        data_line = [l for l in output_lines if "あ" in str(l)][0]
+        self.assertIn("…", str(data_line))
 
 
 class TestRun(unittest.TestCase):
@@ -82,6 +129,22 @@ class TestRun(unittest.TestCase):
         self.assertEqual(p.genre, "SF")
         self.assertEqual(p.theme, "宇宙")
         self.assertEqual(p.char_count, 5000)
+
+    def test_シリーズ指定時にペイロードにシリーズ情報が含まれる(self):
+        novel_meta = _make_novel_meta(series_id=1, episode_number=2)
+        captured = {}
+
+        def fake_notify(payload):
+            captured["payload"] = payload
+
+        with patch("main.generator.generate_novel", return_value=novel_meta):
+            with patch("main.db.get_or_create_series", return_value=1):
+                with patch("main.notifier.send_novel_notification", side_effect=fake_notify):
+                    main._run(genre=None, theme=None, series="魔法少女クロニクル", series_description="")
+
+        p = captured["payload"]
+        self.assertEqual(p.series_name, "魔法少女クロニクル")
+        self.assertEqual(p.episode_number, 2)
 
     def test_生成失敗で例外を送出する(self):
         with patch(
@@ -129,6 +192,12 @@ class TestMain(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             self._run_main([])
         self.assertEqual(ctx.exception.code, 1)
+
+    @patch("main._list_series")
+    @patch("main.db.init_db")
+    def test_list_seriesフラグで_list_seriesが呼ばれ生成しない(self, mock_init, mock_list):
+        self._run_main(["--list-series"])
+        mock_list.assert_called_once()
 
 
 if __name__ == "__main__":
