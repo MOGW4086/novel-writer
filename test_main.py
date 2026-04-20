@@ -12,7 +12,10 @@ import main
 
 def _make_novel_meta(**kwargs) -> dict:
     """テスト用小説メタデータを生成する。"""
-    defaults = dict(id=1, title="テスト小説", genre="ファンタジー", theme="冒険", word_count=3000)
+    defaults = dict(
+        id=1, title="テスト小説", genre="ファンタジー", theme="冒険",
+        word_count=3000, series_id=None, episode_number=None,
+    )
     defaults.update(kwargs)
     return defaults
 
@@ -43,6 +46,10 @@ class TestParseArgs(unittest.TestCase):
         args = self._parse(["--manual", "--genre", "異世界転生", "--theme", "勇者召喚"])
         self.assertEqual(args.genre, "異世界転生")
         self.assertEqual(args.theme, "勇者召喚")
+
+    def test_list_seriesフラグを認識する(self):
+        args = self._parse(["--list-series"])
+        self.assertTrue(args.list_series)
 
 
 class TestRun(unittest.TestCase):
@@ -82,6 +89,22 @@ class TestRun(unittest.TestCase):
         self.assertEqual(p.genre, "SF")
         self.assertEqual(p.theme, "宇宙")
         self.assertEqual(p.char_count, 5000)
+
+    def test_シリーズ指定時にペイロードにシリーズ情報が含まれる(self):
+        novel_meta = _make_novel_meta(series_id=1, episode_number=2)
+        captured = {}
+
+        def fake_notify(payload):
+            captured["payload"] = payload
+
+        with patch("main.generator.generate_novel", return_value=novel_meta):
+            with patch("main.db.get_or_create_series", return_value=1):
+                with patch("main.notifier.send_novel_notification", side_effect=fake_notify):
+                    main._run(genre=None, theme=None, series="魔法少女クロニクル", series_description="")
+
+        p = captured["payload"]
+        self.assertEqual(p.series_name, "魔法少女クロニクル")
+        self.assertEqual(p.episode_number, 2)
 
     def test_生成失敗で例外を送出する(self):
         with patch(
@@ -129,6 +152,12 @@ class TestMain(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             self._run_main([])
         self.assertEqual(ctx.exception.code, 1)
+
+    @patch("main._list_series")
+    @patch("main.db.init_db")
+    def test_list_seriesフラグで_list_seriesが呼ばれ生成しない(self, mock_init, mock_list):
+        self._run_main(["--list-series"])
+        mock_list.assert_called_once()
 
 
 if __name__ == "__main__":

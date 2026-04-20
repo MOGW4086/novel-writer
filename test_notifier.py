@@ -70,6 +70,22 @@ class TestFormatMessage(unittest.TestCase):
         msg = _format_message(_make_payload(char_count=12345))
         self.assertIn("12,345字", msg)
 
+    def test_シリーズ名とエピソード番号が含まれる(self):
+        payload = _make_payload(series_name="魔法少女クロニクル", episode_number=3)
+        msg = _format_message(payload)
+        self.assertIn("魔法少女クロニクル", msg)
+        self.assertIn("第3話", msg)
+
+    def test_シリーズなしのときシリーズ行が含まれない(self):
+        msg = _format_message(_make_payload())
+        self.assertNotIn("シリーズ", msg)
+
+    def test_エピソード番号なしでシリーズ名のみ表示(self):
+        payload = _make_payload(series_name="孤独な旅人", episode_number=None)
+        msg = _format_message(payload)
+        self.assertIn("孤独な旅人", msg)
+        self.assertNotIn("第", msg)
+
 
 class TestGetCredentials(unittest.TestCase):
     """_get_credentials の環境変数バリデーションテスト。"""
