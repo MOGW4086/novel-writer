@@ -5,7 +5,7 @@
 ## 機能
 
 - **小説自動生成**: Claude API による 2 段階生成（構成案 → 場面ごと本文）
-- **LINE 通知**: 生成完了時にタイトル・ジャンル・テーマ・文字数を通知
+- **LINE 通知**: 生成完了時にタイトル・ジャンル・テーマ・文字数・シリーズ情報を通知
 - **シリーズ管理**: 設定・世界観・主人公が共通の作品群をシリーズとして管理
 - **閲覧 Web アプリ**: ローカル FastAPI アプリで小説を読み、フィードバックを記録
 - **読書進捗管理**: スクロール位置を自動保存し、続きから読める
@@ -39,13 +39,13 @@ LINE_CHANNEL_ACCESS_TOKEN=...
 LINE_USER_ID=...
 ```
 
-### DB 初期化・ジャンル設定の投入
+### DB 初期化
+
+DB は初回実行時に自動作成されます。手動で確認する場合：
 
 ```bash
 source venv/bin/activate
-
-# ジャンル設定を DB に登録（初回のみ必須）
-python -c "import db; db.init_db(); db.load_genre_settings_from_json('settings/genre_config.json')"
+python -c "import db; db.init_db(); print('DB初期化完了')"
 ```
 
 ## 使い方
@@ -65,6 +65,26 @@ python main.py --manual --genre "異世界転生" --theme "勇者召喚からの
 python main.py --manual --series "魔法少女クロニクル"
 python main.py --manual --series "魔法少女クロニクル" --series-description "魔法少女たちの戦い"
 
+# 登録済みシリーズ一覧を表示
+python main.py --list-series
+```
+
+### Web アプリの画面一覧
+
+| 画面 | URL | 機能 |
+|---|---|---|
+| トップ（作品一覧） | `/` | 未読・読書中・読了・フィードバック待ちをフィルタリング表示 |
+| 作品読了画面 | `/novels/{id}` | 本文表示・スクロール進捗の自動保存・読了マーク |
+| フィードバック | `/novels/{id}/feedback` | 評価（1〜5）・コメント入力・知見抽出の非同期実行 |
+| シリーズ一覧 | `/series` | シリーズ別の話数・未読数を一覧表示 |
+| シリーズ詳細 | `/series/{id}` | シリーズ内の話数一覧 |
+
+### フィードバックの流れ
+
+```
+本文を読む → 読了マーク → フィードバック入力（評価・コメント）
+    → Claude API が知見を抽出 → DB に保存
+    → 次回の小説生成プロンプトに自動反映
 ```
 
 ### 閲覧 Web アプリを起動する
@@ -157,3 +177,9 @@ novel-writer/
 source venv/bin/activate
 python -m pytest
 ```
+
+## 将来の拡張予定
+
+- **長編シリーズ対応** — 短編で蓄積したノウハウを活かした連載形式への展開
+- **カクヨム・小説家になろう 自動投稿** — 生成した小説の外部サイトへの投稿自動化
+- **知見抽出エラー監視** — バックグラウンド処理の失敗を LINE で通知
