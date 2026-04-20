@@ -136,7 +136,7 @@ def _list_series() -> None:
         return
 
     title_width = 30
-    print(f"{'ID':>4}  {_ljust_display('タイトル', title_width)}  {_ljust_display('話数', 4)}  {_ljust_display('未読', 4)}  最終更新")
+    print(f"{'ID':>4}  {_ljust_display('タイトル', title_width)}  {_ljust_display('話数', 4)}  {_ljust_display('未読', 4)}  {_ljust_display('最終更新', 10)}")
     print("-" * (4 + 2 + title_width + 2 + 4 + 2 + 4 + 2 + 10))
     for s in series_list:
         latest = (s.get("latest_generated_at") or "")[:10]
