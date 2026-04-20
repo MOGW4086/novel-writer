@@ -81,7 +81,8 @@ async def index(request: Request):
 
     # 読了済みでフィードバック未記入の作品を分離
     feedback_needed = [n for n in all_standalone if n["reading_status"] == "completed" and not n["has_feedback"]]
-    standalone = [n for n in all_standalone if n not in feedback_needed]
+    feedback_needed_ids = {n["id"] for n in feedback_needed}
+    standalone = [n for n in all_standalone if n["id"] not in feedback_needed_ids]
 
     return templates.TemplateResponse(
         request,
