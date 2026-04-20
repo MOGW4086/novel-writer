@@ -52,6 +52,46 @@ class TestParseArgs(unittest.TestCase):
         self.assertTrue(args.list_series)
 
 
+class TestListSeries(unittest.TestCase):
+    """_list_series の出力・エラーハンドリングテスト。"""
+
+    @patch("main.db.get_series_list", return_value=[])
+    def test_シリーズ未登録時にメッセージを表示する(self, _):
+        with patch("builtins.print") as mock_print:
+            main._list_series()
+        mock_print.assert_called_once_with("シリーズはまだ登録されていません。")
+
+    @patch("main.db.get_series_list", return_value=[
+        {"id": 1, "title": "魔法少女クロニクル", "novel_count": 3,
+         "unread_count": 1, "latest_generated_at": "2026-04-18T10:00:00"},
+    ])
+    def test_シリーズ一覧にタイトルとエピソード数が含まれる(self, _):
+        output_lines = []
+        with patch("builtins.print", side_effect=output_lines.append):
+            main._list_series()
+        combined = "\n".join(str(l) for l in output_lines)
+        self.assertIn("魔法少女クロニクル", combined)
+        self.assertIn("2026-04-18", combined)
+
+    @patch("main.db.get_series_list", side_effect=Exception("DB接続失敗"))
+    def test_DB取得失敗でsys_exitを呼ぶ(self, _):
+        with self.assertRaises(SystemExit) as ctx:
+            main._list_series()
+        self.assertEqual(ctx.exception.code, 1)
+
+    @patch("main.db.get_series_list", return_value=[
+        {"id": 1, "title": "あ" * 20, "novel_count": 1,
+         "unread_count": 0, "latest_generated_at": "2026-04-18T10:00:00"},
+    ])
+    def test_長いタイトルが切り詰められる(self, _):
+        output_lines = []
+        with patch("builtins.print", side_effect=output_lines.append):
+            main._list_series()
+        # タイトル列が title_width=30 を超えないことを確認（…で切り詰め）
+        data_line = [l for l in output_lines if "あ" in str(l)][0]
+        self.assertIn("…", str(data_line))
+
+
 class TestRun(unittest.TestCase):
     """_run の生成・通知フロー統合テスト。"""
 

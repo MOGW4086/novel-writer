@@ -105,22 +105,45 @@ def _ljust_display(text: str, width: int) -> str:
     return text + " " * max(padding, 0)
 
 
+def _truncate_display(text: str, width: int) -> str:
+    """表示幅を超える場合は末尾を … で切り詰める。"""
+    if _display_width(text) <= width:
+        return text
+    result = ""
+    current = 0
+    for ch in text:
+        w = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        if current + w > width - 1:
+            break
+        result += ch
+        current += w
+    return result + "…"
+
+
 def _list_series() -> None:
     """
     登録済みシリーズの一覧を標準出力に表示する。
+    DB接続失敗時はエラーメッセージを標準エラー出力に表示して終了する。
     """
-    series_list = db.get_series_list()
+    try:
+        series_list = db.get_series_list()
+    except Exception as e:
+        print(f"シリーズ一覧の取得に失敗しました: {e}", file=sys.stderr)
+        sys.exit(1)
+
     if not series_list:
         print("シリーズはまだ登録されていません。")
         return
+
     title_width = 30
-    print(f"{'ID':>4}  {_ljust_display('タイトル', title_width)}  {'話数':>4}  {'未読':>4}  最終更新")
-    print("-" * (4 + 2 + title_width + 2 + 6 + 2 + 6 + 2 + 10))
+    print(f"{'ID':>4}  {_ljust_display('タイトル', title_width)}  {_ljust_display('話数', 4)}  {_ljust_display('未読', 4)}  最終更新")
+    print("-" * (4 + 2 + title_width + 2 + 4 + 2 + 4 + 2 + 10))
     for s in series_list:
         latest = (s.get("latest_generated_at") or "")[:10]
+        title = _ljust_display(_truncate_display(s["title"], title_width), title_width)
         print(
-            f"{s['id']:>4}  {_ljust_display(s['title'], title_width)}  "
-            f"{s.get('novel_count', 0):>4}話  "
+            f"{s['id']:>4}  {title}  "
+            f"{s.get('novel_count', 0):>2}話  "
             f"{s.get('unread_count', 0):>4}  "
             f"{latest}"
         )
@@ -164,7 +187,7 @@ def _run(genre: str | None, theme: str | None, series: str | None, series_descri
         theme=novel_meta["theme"],
         char_count=novel_meta["word_count"],
         series_name=series,
-        episode_number=novel_meta.get("episode_number"),
+        episode_number=novel_meta["episode_number"],
     )
     try:
         notifier.send_novel_notification(payload)
