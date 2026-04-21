@@ -16,13 +16,18 @@ from typing import Optional
 #       このモジュールの接続都度生成パターンでは使用不可。テストには一時ファイルを使うこと。
 DB_PATH = Path(os.getenv("DB_PATH", str(Path(__file__).parent / "data" / "novels.db")))
 
+# テスト時にDIで差し替えるパス。Noneのとき DB_PATH を使用する。
+# FastAPI の dependency_override と組み合わせて使用する（test_app.py 参照）。
+_test_db_path: Optional[Path] = None
+
 
 @contextmanager
 def get_connection():
     """DBコネクションのコンテキストマネージャ。自動でコミット/ロールバックを行う。"""
-    if str(DB_PATH) != ":memory:":
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    path = _test_db_path if _test_db_path is not None else DB_PATH
+    if str(path) != ":memory:":
+        path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys = ON")  # 外部キー制約を有効化（SQLiteはデフォルト無効）
     conn.row_factory = sqlite3.Row  # カラム名でアクセスできるようにする
     try:
