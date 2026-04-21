@@ -205,18 +205,18 @@ async def update_progress(novel_id: int, body: ProgressRequest, _db=Depends(get_
 _EXTRACTION_FAILURE_ALERT_THRESHOLD = 3
 
 
-def _run_knowledge_extraction(comment: str, novel_id: int) -> None:
+def _run_knowledge_extraction(comment: str, novel_id: int, _db) -> None:
     """バックグラウンドタスク: 知見抽出を実行し、結果をDBに記録する。失敗が続いたらLINE通知。"""
     try:
         knowledge.extract_and_save_knowledge(comment, novel_id=novel_id)
-        db.save_extraction_log(novel_id, "success")
+        _db.save_extraction_log(novel_id, "success")
     except Exception as exc:
         error_type = type(exc).__name__
         error_message = str(exc)
         logger.warning("知見抽出に失敗しました（novel_id=%d）: %s", novel_id, exc, exc_info=True)
-        db.save_extraction_log(novel_id, "failure", error_type=error_type, error_message=error_message)
+        _db.save_extraction_log(novel_id, "failure", error_type=error_type, error_message=error_message)
 
-        consecutive = db.get_consecutive_failure_count()
+        consecutive = _db.get_consecutive_failure_count()
         if consecutive == _EXTRACTION_FAILURE_ALERT_THRESHOLD:
             notifier.send_extraction_error_notification(consecutive, error_type, error_message)
 
@@ -243,6 +243,6 @@ async def submit_feedback(
     _db.save_feedback(novel_id, rating, clean_comment)
 
     if clean_comment:
-        background_tasks.add_task(_run_knowledge_extraction, clean_comment, novel_id)
+        background_tasks.add_task(_run_knowledge_extraction, clean_comment, novel_id, _db)
 
     return RedirectResponse(url=f"/novels/{novel_id}#feedback", status_code=303)
