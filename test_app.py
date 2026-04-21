@@ -332,6 +332,13 @@ class TestExtractionLog(unittest.TestCase):
                 mock_notify.assert_called_once()
                 args = mock_notify.call_args[0]
                 self.assertEqual(args[0], 3)  # consecutive_failures
+                # 4回目以降は通知しない（==なので閾値到達時の1回のみ）
+                self.client.post(
+                    f"/novels/{self.novel_id}/feedback",
+                    data={"rating": "2", "comment": "コメント"},
+                    follow_redirects=False,
+                )
+                mock_notify.assert_called_once()  # 呼び出し回数が増えていないことを確認
 
     def test_成功後は連続失敗カウントがリセットされる(self):
         # 2回失敗させた後に成功させる

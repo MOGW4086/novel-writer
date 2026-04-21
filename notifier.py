@@ -254,11 +254,14 @@ def send_extraction_error_notification(
         logger.warning("LINE認証情報が未設定のため知見抽出エラー通知をスキップします")
         return
 
+    # LINE APIは5000文字制限のため、長いエラーメッセージを切り詰める
+    safe_error_message = (error_message[:1000] + "...") if len(error_message) > 1000 else error_message
+
     message = (
         f"【知見抽出エラー通知】\n"
         f"連続失敗回数: {consecutive_failures}回\n"
         f"エラー種別: {error_type}\n"
-        f"メッセージ: {error_message}"
+        f"メッセージ: {safe_error_message}"
     )
 
     try:

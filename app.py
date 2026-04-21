@@ -212,7 +212,7 @@ def _run_knowledge_extraction(comment: str, novel_id: int) -> None:
         db.save_extraction_log(novel_id, "failure", error_type=error_type, error_message=error_message)
 
         consecutive = db.get_consecutive_failure_count()
-        if consecutive >= _EXTRACTION_FAILURE_ALERT_THRESHOLD:
+        if consecutive == _EXTRACTION_FAILURE_ALERT_THRESHOLD:
             notifier.send_extraction_error_notification(consecutive, error_type, error_message)
 
 
