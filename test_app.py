@@ -25,7 +25,7 @@ def _setup_test_db(tmp_path: str) -> None:
 
 def _teardown_test_db() -> None:
     """dependency_overrideをクリアし、dbモジュールのテスト用パスをリセットする。"""
-    app_mod.app.dependency_overrides.clear()
+    app_mod.app.dependency_overrides.pop(app_mod.get_db, None)
     db_mod._test_db_path = None
 
 
