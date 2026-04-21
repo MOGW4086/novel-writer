@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 import db
 import knowledge
+import notifier
 
 app = FastAPI(title="novel-reader")
 templates = Jinja2Templates(directory="templates")
@@ -195,12 +196,24 @@ async def update_progress(novel_id: int, body: ProgressRequest):
 # フィードバック送信
 # ──────────────────────────────────────────────
 
+# 連続失敗がこの回数に達した場合にLINE通知を送る
+_EXTRACTION_FAILURE_ALERT_THRESHOLD = 3
+
+
 def _run_knowledge_extraction(comment: str, novel_id: int) -> None:
-    """バックグラウンドタスク: 知見抽出を実行する。失敗してもログのみ記録する。"""
+    """バックグラウンドタスク: 知見抽出を実行し、結果をDBに記録する。失敗が続いたらLINE通知。"""
     try:
         knowledge.extract_and_save_knowledge(comment, novel_id=novel_id)
+        db.save_extraction_log(novel_id, "success")
     except Exception as exc:
+        error_type = type(exc).__name__
+        error_message = str(exc)
         logger.warning("知見抽出に失敗しました（novel_id=%d）: %s", novel_id, exc, exc_info=True)
+        db.save_extraction_log(novel_id, "failure", error_type=error_type, error_message=error_message)
+
+        consecutive = db.get_consecutive_failure_count()
+        if consecutive >= _EXTRACTION_FAILURE_ALERT_THRESHOLD:
+            notifier.send_extraction_error_notification(consecutive, error_type, error_message)
 
 
 @app.post("/novels/{novel_id}/feedback")

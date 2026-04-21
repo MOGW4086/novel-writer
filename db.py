@@ -125,6 +125,16 @@ def init_db() -> None:
                 sub_themes  TEXT NOT NULL DEFAULT '[]',
                 active      INTEGER NOT NULL DEFAULT 1
             );
+
+            -- 知見抽出実行ログ（成功・失敗を記録してエラー監視に使用）
+            CREATE TABLE IF NOT EXISTS extraction_logs (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                novel_id      INTEGER REFERENCES novels(id),
+                status        TEXT NOT NULL CHECK (status IN ('success', 'failure')),
+                error_type    TEXT,
+                error_message TEXT,
+                created_at    TEXT NOT NULL
+            );
         """)
 
         # 相関サブクエリで頻繁に参照するカラムにインデックスを追加
@@ -849,3 +859,54 @@ def get_reading_progress(novel_id: int) -> Optional[dict]:
             "SELECT * FROM reading_progress WHERE novel_id = ?", (novel_id,)
         ).fetchone()
         return dict(row) if row else None
+
+
+# ──────────────────────────────────────────────
+# extraction_logs テーブル
+# ──────────────────────────────────────────────
+
+def save_extraction_log(
+    novel_id: int,
+    status: str,
+    error_type: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> None:
+    """
+    知見抽出の実行結果をログに保存する。
+
+    Args:
+        novel_id: 対象小説のID
+        status: 実行結果（'success' または 'failure'）
+        error_type: エラーの種別（失敗時のみ）
+        error_message: エラーメッセージ（失敗時のみ）
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO extraction_logs (novel_id, status, error_type, error_message, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (novel_id, status, error_type, error_message, now),
+        )
+
+
+def get_consecutive_failure_count() -> int:
+    """
+    直近のログを新しい順に走査し、連続して失敗している件数を返す。
+    成功ログが見つかった時点で走査を終了する。
+
+    Returns:
+        連続失敗件数（成功ログが最新なら0）
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT status FROM extraction_logs ORDER BY id DESC LIMIT 100"
+        ).fetchall()
+    count = 0
+    for row in rows:
+        if row["status"] == "failure":
+            count += 1
+        else:
+            break
+    return count
