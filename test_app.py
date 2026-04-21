@@ -273,5 +273,145 @@ class TestReadingProgressCRUD(unittest.TestCase):
         self.assertIsNotNone(novels[0].get("opened_at"))
 
 
+class TestExtractionLog(unittest.TestCase):
+    """知見抽出ログの記録とLINE通知のテスト。"""
+
+    def setUp(self):
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.client = _make_client(self._tmp.name)
+        import db as db_mod
+        self.db_mod = db_mod
+        self.novel_id = db_mod.save_novel("抽出ログテスト", "ファンタジー", "冒険", "本文")
+
+    def tearDown(self):
+        os.unlink(self._tmp.name)
+
+    def test_成功時にsuccessログが保存される(self):
+        with patch("knowledge.extract_and_save_knowledge"):
+            self.client.post(
+                f"/novels/{self.novel_id}/feedback",
+                data={"rating": "5", "comment": "良かった"},
+                follow_redirects=False,
+            )
+        with self.db_mod.get_connection() as conn:
+            logs = conn.execute("SELECT status FROM extraction_logs").fetchall()
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0]["status"], "success")
+
+    def test_失敗時にfailureログが保存される(self):
+        with patch("knowledge.extract_and_save_knowledge", side_effect=ValueError("test error")):
+            with patch("notifier.send_extraction_error_notification"):
+                self.client.post(
+                    f"/novels/{self.novel_id}/feedback",
+                    data={"rating": "3", "comment": "コメント"},
+                    follow_redirects=False,
+                )
+        with self.db_mod.get_connection() as conn:
+            logs = conn.execute("SELECT status, error_type FROM extraction_logs").fetchall()
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0]["status"], "failure")
+        self.assertEqual(logs[0]["error_type"], "ValueError")
+
+    def test_連続失敗カウントが閾値に達するとLINE通知が送られる(self):
+        with patch("knowledge.extract_and_save_knowledge", side_effect=Exception("API error")):
+            with patch("notifier.send_extraction_error_notification") as mock_notify:
+                # 閾値（3回）に達するまでは通知しない
+                for _ in range(2):
+                    self.client.post(
+                        f"/novels/{self.novel_id}/feedback",
+                        data={"rating": "2", "comment": "コメント"},
+                        follow_redirects=False,
+                    )
+                mock_notify.assert_not_called()
+                # 3回目で通知
+                self.client.post(
+                    f"/novels/{self.novel_id}/feedback",
+                    data={"rating": "2", "comment": "コメント"},
+                    follow_redirects=False,
+                )
+                mock_notify.assert_called_once()
+                args = mock_notify.call_args[0]
+                self.assertEqual(args[0], 3)  # consecutive_failures
+                # 4回目以降は通知しない（==なので閾値到達時の1回のみ）
+                self.client.post(
+                    f"/novels/{self.novel_id}/feedback",
+                    data={"rating": "2", "comment": "コメント"},
+                    follow_redirects=False,
+                )
+                mock_notify.assert_called_once()  # 呼び出し回数が増えていないことを確認
+
+    def test_成功後は連続失敗カウントがリセットされる(self):
+        # 2回失敗させた後に成功させる
+        with patch("knowledge.extract_and_save_knowledge", side_effect=Exception("error")):
+            with patch("notifier.send_extraction_error_notification"):
+                for _ in range(2):
+                    self.client.post(
+                        f"/novels/{self.novel_id}/feedback",
+                        data={"rating": "2", "comment": "コメント"},
+                        follow_redirects=False,
+                    )
+        with patch("knowledge.extract_and_save_knowledge"):
+            self.client.post(
+                f"/novels/{self.novel_id}/feedback",
+                data={"rating": "5", "comment": "コメント"},
+                follow_redirects=False,
+            )
+        self.assertEqual(self.db_mod.get_consecutive_failure_count(), 0)
+
+    def test_コメントなしの場合は抽出ログが保存されない(self):
+        self.client.post(
+            f"/novels/{self.novel_id}/feedback",
+            data={"rating": "3", "comment": ""},
+            follow_redirects=False,
+        )
+        with self.db_mod.get_connection() as conn:
+            logs = conn.execute("SELECT * FROM extraction_logs").fetchall()
+        self.assertEqual(len(logs), 0)
+
+
+class TestExtractionLogCRUD(unittest.TestCase):
+    """db.save_extraction_log / get_consecutive_failure_count の単体テスト。"""
+
+    def setUp(self):
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        os.environ["DB_PATH"] = self._tmp.name
+        import importlib
+        import db as db_mod
+        importlib.reload(db_mod)
+        db_mod.init_db()
+        self.db = db_mod
+        self.novel_id = db_mod.save_novel("ログCRUDテスト", "SF", "宇宙", "本文")
+
+    def tearDown(self):
+        os.unlink(self._tmp.name)
+
+    def test_ログが空のとき連続失敗は0(self):
+        self.assertEqual(self.db.get_consecutive_failure_count(), 0)
+
+    def test_successが最新のとき連続失敗は0(self):
+        self.db.save_extraction_log(self.novel_id, "failure")
+        self.db.save_extraction_log(self.novel_id, "success")
+        self.assertEqual(self.db.get_consecutive_failure_count(), 0)
+
+    def test_failureが連続するとその件数を返す(self):
+        self.db.save_extraction_log(self.novel_id, "success")
+        self.db.save_extraction_log(self.novel_id, "failure")
+        self.db.save_extraction_log(self.novel_id, "failure")
+        self.db.save_extraction_log(self.novel_id, "failure")
+        self.assertEqual(self.db.get_consecutive_failure_count(), 3)
+
+    def test_エラー情報が保存される(self):
+        self.db.save_extraction_log(
+            self.novel_id, "failure",
+            error_type="ValueError", error_message="テストエラー"
+        )
+        with self.db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM extraction_logs ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        self.assertEqual(row["error_type"], "ValueError")
+        self.assertEqual(row["error_message"], "テストエラー")
+
+
 if __name__ == "__main__":
     unittest.main()

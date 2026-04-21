@@ -229,3 +229,48 @@ def send_novel_notification(payload: NovelNotifyPayload) -> None:
 
     assert last_exception is not None  # ループが0回以上実行された保証（型検査用）
     raise last_exception
+
+
+def send_extraction_error_notification(
+    consecutive_failures: int,
+    error_type: str,
+    error_message: str,
+) -> None:
+    """
+    知見抽出の連続失敗をLINEに通知する。
+    通知自体の失敗はログのみ記録し、例外を上位に伝播させない。
+
+    Args:
+        consecutive_failures: 現在の連続失敗件数。
+        error_type: 最新エラーの種別。
+        error_message: 最新エラーのメッセージ。
+    """
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    try:
+        channel_access_token, user_id = _get_credentials()
+    except ValueError:
+        logger.warning("LINE認証情報が未設定のため知見抽出エラー通知をスキップします")
+        return
+
+    # LINE APIは5000文字制限のため、長いエラーメッセージを切り詰める
+    safe_error_message = (error_message[:1000] + "...") if len(error_message) > 1000 else error_message
+
+    message = (
+        f"【知見抽出エラー通知】\n"
+        f"連続失敗回数: {consecutive_failures}回\n"
+        f"エラー種別: {error_type}\n"
+        f"メッセージ: {safe_error_message}"
+    )
+
+    try:
+        resp = _send_once(channel_access_token, user_id, message)
+        if resp.ok:
+            logger.info("知見抽出エラー通知を送信しました（連続失敗%d回）", consecutive_failures)
+        else:
+            logger.warning(
+                "知見抽出エラー通知の送信に失敗しました: status=%d", resp.status_code
+            )
+    except requests.RequestException as exc:
+        logger.warning("知見抽出エラー通知の送信中に例外が発生しました: %s", exc)
